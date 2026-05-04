@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevMemory</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>DevMemory</h1>
+    <nav>
+      <button class="nav-btn active" data-view="capture">Capture</button>
+      <button class="nav-btn" data-view="search">Search</button>
+      <button class="nav-btn" data-view="today">Today</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Capture View -->
+    <section id="view-capture" class="view active">
+      <div class="form-group">
+        <label>Content</label>
+        <textarea id="capture-content" placeholder="Enter command, URL, note, snippet..." rows="3"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Type</label>
+          <select id="capture-type">
+            <option value="">Auto-detect</option>
+            <option value="command">Command</option>
+            <option value="url">URL</option>
+            <option value="snippet">Snippet</option>
+            <option value="prompt">Prompt</option>
+            <option value="note">Note</option>
+            <option value="issue">Issue</option>
+            <option value="journal">Journal</option>
+            <option value="business">Business</option>
+            <option value="task">Task</option>
+            <option value="file">File</option>
+            <option value="folder">Folder</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="capture-title" placeholder="Optional title">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Project</label>
+          <input type="text" id="capture-project" placeholder="e.g. myapp">
+        </div>
+        <div class="form-group">
+          <label>Tags</label>
+          <input type="text" id="capture-tags" placeholder="tag1, tag2">
+        </div>
+      </div>
+      <button id="capture-submit" class="btn-primary">Add Entry</button>
+      <div id="capture-msg" class="msg"></div>
+    </section>
+
+    <!-- Search View -->
+    <section id="view-search" class="view">
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="Search entries..." autofocus>
+        <select id="search-type">
+          <option value="">All types</option>
+          <option value="command">Command</option>
+          <option value="url">URL</option>
+          <option value="snippet">Snippet</option>
+          <option value="prompt">Prompt</option>
+          <option value="note">Note</option>
+          <option value="issue">Issue</option>
+          <option value="journal">Journal</option>
+          <option value="business">Business</option>
+          <option value="task">Task</option>
+        </select>
+        <button id="search-btn" class="btn-primary">Search</button>
+      </div>
+      <div id="search-results"></div>
+    </section>
+
+    <!-- Today View -->
+    <section id="view-today" class="view">
+      <div class="today-header">
+        <h2 id="today-date"></h2>
+        <button id="today-refresh" class="btn-secondary">Refresh</button>
+      </div>
+      <div id="today-entries"></div>
+    </section>
+  </main>
+</div>
+
+<!-- Entry Detail Modal -->
+<div id="modal" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="modal-title">Entry Detail</h3>
+      <button id="modal-close" class="btn-close">&times;</button>
+    </div>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button id="modal-copy" class="btn-secondary">Copy Content</button>
+      <button id="modal-toggle-fav" class="btn-secondary">Toggle Favorite</button>
+      <button id="modal-archive" class="btn-secondary">Archive</button>
+      <button id="modal-delete" class="btn-danger">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

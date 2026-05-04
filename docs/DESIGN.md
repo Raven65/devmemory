@@ -41,8 +41,9 @@ DevMemory 要做的是：**一个本地运行的、零摩擦的信息捕获器 +
 | **Go** | 天然跨平台交叉编译、单二进制产出、CGO_ENABLED=0 编译零依赖、标准库足够 |
 | **bbolt** | 纯 Go 实现、单文件数据库、嵌入式无需进程、事务安全、key-value 足够 Entry 存储 |
 | **Local Web UI** | HTML/CSS/JS 是最轻量的跨平台 UI 方案、Go embed 嵌入后零外部依赖、浏览器即界面 |
-| **net/http** | 标准库、无需框架、足够本地使用 |
+| **net/http** | 标准库、Go 1.22+ 原生路由匹配、无需框架 |
 | **Go embed** | 将前端资源编译进二进制，实现真正的单文件分发 |
+| **手动 flag 解析** | CLI 不用 cobra 等框架，手动解析参数，支持 flags 在任意位置，更轻量 |
 
 ### 为什么暂时不做原生 GUI
 
@@ -50,8 +51,9 @@ Qt 需要 CGO，Electron 体积巨大，Wails/Fyne 增加复杂度。第一阶�
 
 ### 为什么适合个人使用且跨平台
 
-- 单二进制，双击即用（Windows）或 `./devmemory` 即用（Linux/macOS）
-- 数据全部本地，portable mode 支持U盘随身携带
+- 单二进制，Windows 双击自动启动 Web UI
+- Linux/macOS 命令行直接运行
+- 数据全部本地，portable mode 支持 U 盘随身携带
 - 无需安装、无需账号、无需网络
 - Go 交叉编译从 Linux 一键产出四个平台的二进制
 
@@ -63,7 +65,9 @@ Qt 需要 CGO，Electron 体积巨大，Wails/Fyne 增加复杂度。第一阶�
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                    CLI (cobra)                   │
+│                   CLI (main.go)                  │
+│   add / list / show / delete / edit / search    │
+│   today / export / import / serve               │
 ├─────────────────────────────────────────────────┤
 │               Local Web UI (embed)              │
 │         index.html / app.js / style.css         │
@@ -72,13 +76,13 @@ Qt 需要 CGO，Electron 体积巨大，Wails/Fyne 增加复杂度。第一阶�
 │  GET/POST /api/entries, /api/search, ...        │
 ├──────────┬──────────┬──────────┬────────────────┤
 │  Search  │  Action  │  Export  │    Config      │
-│  Engine  │ Executor │  Engine  │    Paths       │
+│  Engine  │ Detector │  Engine  │    Paths       │
 ├──────────┴──────────┴──────────┴────────────────┤
 │                   Core Model                    │
 │              Entry / EntryType                  │
 ├─────────────────────────────────────────────────┤
 │               bbolt Store                       │
-│          (data dir / portable mode)             │
+│      CRUD + ResolveID + GetByDate              │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -87,57 +91,68 @@ Qt 需要 CGO，Electron 体积巨大，Wails/Fyne 增加复杂度。第一阶�
 ```
 devmemory/
 ├── go.mod
+├── go.sum
+├── .gitignore
 ├── README.md
 │
 ├── cmd/
 │   └── devmemory/
-│       └── main.go              # CLI 入口 + serve 命令
+│       └── main.go              # CLI 入口 + 全部子命令 + serve
 │
 ├── internal/
 │   ├── core/
-│   │   ├── entry.go             # Entry struct 定义
-│   │   └── types.go             # EntryType 常量
+│   │   ├── entry.go             # Entry struct + NewEntry + TitleOrContent
+│   │   └── types.go             # EntryType 常量（11 种）
 │   │
 │   ├── store/
-│   │   ├── store.go             # Store interface
-│   │   └── bbolt_store.go       # bbolt 实现
+│   │   ├── store.go             # Store interface + ListOptions
+│   │   ├── bbolt_store.go       # bbolt 实现 + ResolveID + GetByDate
+│   │   └── bbolt_store_test.go  # 测试（11 cases）
 │   │
 │   ├── search/
-│   │   ├── search.go            # 搜索逻辑
-│   │   └── scorer.go            # 权重评分
+│   │   ├── search.go            # 搜索逻辑 + Result 结构
+│   │   ├── scorer.go            # 权重评分
+│   │   └── search_test.go       # 测试（7 cases）
 │   │
 │   ├── action/
-│   │   ├── executor.go          # 动作执行接口 + 危险检测
-│   │   ├── executor_linux.go    # Linux 平台实现
-│   │   ├── executor_windows.go  # Windows 平台实现
-│   │   └── executor_darwin.go   # macOS 平台实现
+│   │   └── executor.go          # 类型推断 DetectType + 危险检测 IsDangerous
 │   │
 │   ├── export/
-│   │   ├── markdown.go          # Markdown daily export
-│   │   └── json.go              # JSON backup/export/import
+│   │   ├── markdown.go          # ExportDailyMarkdown
+│   │   ├── json.go              # ExportJSON + ImportJSON
+│   │   └── export_test.go       # 测试（7 cases）
 │   │
 │   ├── server/
-│   │   ├── server.go            # HTTP server + router
-│   │   └── handlers.go          # API handlers
+│   │   ├── server.go            # HTTP server + embed + 路由 + 优雅关闭
+│   │   ├── handlers.go          # 全部 API handler
+│   │   ├── exec.go              # 浏览器打开（!windows）
+│   │   ├── exec_windows.go      # 浏览器打开（windows）
+│   │   └── static/              # go:embed 嵌入
+│   │       ├── index.html       # Web UI 页面（三视图 + 弹窗）
+│   │       ├── style.css        # 暗色主题（GitHub 风格）
+│   │       └── app.js           # 前端交互逻辑
 │   │
 │   └── config/
-│       ├── config.go            # 配置结构
-│       ├── paths.go             # 通用路径逻辑 + portable mode
-│       ├── paths_linux.go
-│       ├── paths_windows.go
-│       └── paths_darwin.go
-│
-├── web/
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
+│       ├── config.go            # Config struct + DefaultConfig
+│       ├── paths.go             # portable mode 检测 + 通用逻辑
+│       ├── paths_linux.go       # ~/.config/devmemory
+│       ├── paths_windows.go     # %APPDATA%/DevMemory
+│       └── paths_darwin.go      # ~/Library/Application Support/DevMemory
 │
 ├── scripts/
-│   └── build.sh                 # 四平台构建脚本
+│   └── build.sh                 # 四平台构建 → dist/
 │
-└── docs/
-    ├── DESIGN.md                # 本文件
-    └── PLAN.md                  # 路线图和任务拆解
+├── docs/
+│   ├── DESIGN.md                # 架构设计（本文件）
+│   ├── PLAN.md                  # 路线图与任务拆解
+│   ├── SPEC.md                  # 数据结构与接口
+│   └── PROGRESS.md              # 开发进度跟踪
+│
+└── dist/                        # 构建产物（.gitignore）
+    ├── devmemory-linux-amd64
+    ├── devmemory-windows-amd64.exe
+    ├── devmemory-darwin-amd64
+    └── devmemory-darwin-arm64
 ```
 
 ### 核心数据流
@@ -155,18 +170,19 @@ devmemory/
          ▼          ▼          ▼
     ┌─────────┐ ┌────────┐ ┌────────┐
     │ Search  │ │ Action │ │ Export │
-    │ Engine  │ │Executor│ │ Engine │
+    │ Engine  │ │Detect  │ │ Engine │
     └─────────┘ └────────┘ └────────┘
 ```
 
 ### Entry 生命周期
 
 ```
-Capture (add)
+Capture (add / Web UI POST)
+  → 自动类型推断 + 危险检测
   → 存入 bbolt (CreatedAt, UpdatedAt)
   → 可选设置 Tags, Project, Favorite
     → Search (按权重排序返回)
-    → Action (copy/open/execute)
+    → Copy (UseCount++, LastUsedAt 更新)
     → Edit (修改内容, UpdatedAt 更新)
     → Archive (Archived=true)
     → Export (Markdown / JSON)
@@ -181,7 +197,7 @@ Capture (add)
 
 ```go
 type Entry struct {
-    ID          string     // UUID
+    ID          string     // 32 字符 hex ID (crypto/rand)
     Type        EntryType  // command / url / snippet / ...
     Title       string
     Content     string
@@ -189,50 +205,30 @@ type Entry struct {
     Project     string
     Tags        []string
     Favorite    bool
-    Dangerous   bool
+    Dangerous   bool       // 自动检测：rm -rf, del /s, format, ...
     Archived    bool
     CreatedAt   time.Time
     UpdatedAt   time.Time
-    LastUsedAt  *time.Time
-    UseCount    int
+    LastUsedAt  *time.Time // Copy 时更新
+    UseCount    int        // Copy 时递增
 }
 ```
 
-### EntryType
+### EntryType（11 种）
 
-```go
-type EntryType string
-
-const (
-    EntryTypeCommand  EntryType = "command"
-    EntryTypeURL      EntryType = "url"
-    EntryTypeSnippet  EntryType = "snippet"
-    EntryTypePrompt   EntryType = "prompt"
-    EntryTypeNote     EntryType = "note"
-    EntryTypeIssue    EntryType = "issue"
-    EntryTypeJournal  EntryType = "journal"
-    EntryTypeBusiness EntryType = "business"
-    EntryTypeTask     EntryType = "task"
-    EntryTypeFile     EntryType = "file"
-    EntryTypeFolder   EntryType = "folder"
-)
-```
-
-### 不同 Entry 类型的默认动作
-
-| Type | 默认动作 |
-|------|----------|
-| command | 确认后执行，或复制命令 |
-| url | 打开浏览器 |
-| snippet | 复制文本 |
-| prompt | 复制文本 |
-| note | 查看详情 |
-| issue | 查看详情 |
-| journal | 查看详情 |
-| business | 查看详情 |
-| task | 查看详情 / 标记完成 |
-| file | 打开文件 |
-| folder | 打开文件夹 |
+| Type | 分类 | 默认动作 | 说明 |
+|------|------|----------|------|
+| command | 动作 | 确认后执行，或复制 | shell 命令 |
+| url | 动作 | 打开浏览器 | 网址 |
+| snippet | 动作 | 复制文本 | 代码片段 |
+| prompt | 动作 | 复制文本 | AI prompt |
+| file | 动作 | 打开文件 | 文件路径 |
+| folder | 动作 | 打开文件夹 | 文件夹路径 |
+| note | 日志 | 查看详情 | 随手笔记 |
+| issue | 日志 | 查看详情 | 问题记录 |
+| journal | 日志 | 查看详情 | 日志条目 |
+| business | 日志 | 查看详情 | 业务知识 |
+| task | 日志 | 查看详情 / 标记完成 | 待办任务 |
 
 ---
 
@@ -241,40 +237,43 @@ const (
 ### CLI / Web UI / Core / Store 分层
 
 - **Core** 定义 Entry 模型，不依赖任何存储或 UI
-- **Store** 通过 interface 暴露 CRUD，bbolt 是实现细节
-- **Search** 依赖 Core 模型和 Store interface，不依赖 HTTP 或 CLI
-- **CLI** 调用 Core + Store + Search + Export，不包含业务逻辑
-- **Server** 调用 Core + Store + Search + Action，暴露 HTTP API，不包含业务逻辑
-- **Web UI** 纯静态文件，只通过 HTTP API 交互
+- **Store** 通过 interface 暴露 CRUD + ResolveID + GetByDate，bbolt 是实现细节
+- **Search** 依赖 Core 模型，从 Store 获取数据后自行评分排序，不依赖 HTTP 或 CLI
+- **Action** 依赖 Core 模型，提供类型推断和危险检测，不依赖存储
+- **Export** 依赖 Core 模型，将 Entry 列表转为 Markdown/JSON，不依赖存储
+- **CLI** 调用 Core + Store + Search + Export + Server，不包含业务逻辑
+- **Server** 调用 Core + Store + Search + Export，暴露 HTTP API，embed 静态文件
+- **Web UI** 纯静态文件（HTML/CSS/JS），只通过 HTTP API 交互
 
 ### Store Interface
 
 ```go
 type Store interface {
+    Open() error
+    Close() error
     Create(entry *core.Entry) error
     Get(id string) (*core.Entry, error)
     Update(entry *core.Entry) error
     Delete(id string) error
     List(opts ListOptions) ([]*core.Entry, error)
-    Search(query string) ([]*core.Entry, error)
+    ResolveID(prefix string) (string, error)    // 短 ID → 完整 ID
+    GetByDate(year, month, day int) ([]*core.Entry, error)
 }
 ```
 
 ### 平台相关逻辑隔离
 
 ```
-executor.go         → 接口定义 + 危险命令检测（通用逻辑）
-executor_linux.go   → xdg-open, exec.Command("sh", "-c", ...)
-executor_windows.go → rundll32 / start, exec.Command("cmd", "/c", ...)
-executor_darwin.go  → open, exec.Command("open", ...)
+server/exec.go           → 浏览器打开（!windows，使用 xdg-open/open）
+server/exec_windows.go   → 浏览器打开（windows，使用 cmd /c start）
 
-paths.go            → 通用逻辑（portable mode 检测）
-paths_linux.go      → ~/.config/devmemory
-paths_windows.go    → %APPDATA%/DevMemory
-paths_darwin.go     → ~/Library/Application Support/DevMemory
+config/paths.go          → 通用逻辑（portable mode 检测）
+config/paths_linux.go    → ~/.config/devmemory
+config/paths_windows.go  → %APPDATA%/DevMemory
+config/paths_darwin.go   → ~/Library/Application Support/DevMemory
 ```
 
-Go 编译时通过文件名后缀自动选择对应平台文件。
+Go 编译时通过 build tag（`//go:build windows`）自动选择对应平台文件。
 
 ---
 
@@ -308,42 +307,48 @@ devmemory-data/
 
 ```
 GET    /api/health                # 健康检查
+GET    /                          # Web UI（embed 静态文件）
 
-GET    /api/entries               # 列表（支持 ?type=&project=&tag= 筛选）
-POST   /api/entries               # 新增
-GET    /api/entries/:id           # 详情
-PUT    /api/entries/:id           # 更新
-DELETE /api/entries/:id           # 删除
+GET    /api/entries               # 列表（?type=&project=&tag= 筛选）
+POST   /api/entries               # 新增（JSON body）
+GET    /api/entries/{id}          # 详情（支持短 ID 前缀）
+PUT    /api/entries/{id}          # 更新（partial update）
+DELETE /api/entries/{id}          # 删除（支持短 ID 前缀）
 
-GET    /api/search?q=             # 搜索
-GET    /api/today                 # 今日记录
+GET    /api/search?q=&type=       # 搜索（返回 entry + score）
+GET    /api/today                 # 今日记录（date + entries）
 
-POST   /api/entries/:id/execute   # 执行命令（带确认）
-POST   /api/entries/:id/copy      # 记录使用次数
-POST   /api/entries/:id/open      # 打开 URL/文件/文件夹
+POST   /api/entries/{id}/copy     # 记录使用 + 返回 content
 
-GET    /api/export/today          # 导出今日 Markdown
-GET    /api/export/json           # 导出全量 JSON
-POST   /api/import/json           # 导入 JSON
+GET    /api/export/today          # 导出今日 Markdown（attachment）
+GET    /api/export/json           # 导出全量 JSON（attachment）
+POST   /api/import/json           # 导入 JSON（数组或 {entries:[...]})
 ```
+
+所有 API 端点加 CORS 头（`Access-Control-Allow-origin: *`），便于本地开发。
 
 ---
 
 ## 八、CLI 设计
 
 ```bash
-devmemory serve                                            # 启动 HTTP server
-devmemory add <content> [--type] [--title] [--project] [--tags]  # 新增
-devmemory list [--type] [--project] [--tag]                # 列表
-devmemory search <query>                                   # 搜索
-devmemory show <entry-id>                                  # 详情
-devmemory delete <entry-id>                                # 删除
-devmemory today                                            # 今日记录
-devmemory export today -o daily.md                         # 导出今日 Markdown
-devmemory export json -o backup.json                       # 导出 JSON
-devmemory import backup.json                               # 导入 JSON
-devmemory version                                          # 版本信息
+devmemory serve [--port 8420] [--no-open]                   # 启动 Web UI
+devmemory add <content> [--type] [--title] [--project] [--tags]
+devmemory list [--type] [--project] [--tag]                  # 别名：ls
+devmemory search <query> [--type]                            # 别名：s
+devmemory show <id>                                          # 支持短 ID
+devmemory edit <id> [--title] [--content] [--type] ...       # 支持短 ID
+devmemory delete <id> [--force]                              # 别名：rm，支持短 ID
+devmemory today                                              # 今日记录
+devmemory export today [-o file]                             # Markdown
+devmemory export json [-o file]                              # JSON
+devmemory import <file>                                      # JSON（ID 冲突覆盖）
+devmemory version                                            # 版本信息
 ```
+
+### Windows 双击行为
+
+Windows 上双击 `devmemory.exe`（无参数）自动执行 `serve` 命令，启动 Web UI 并打开浏览器。其他平台无参数时显示帮助信息。
 
 ### 自动类型推断规则
 
@@ -355,7 +360,23 @@ devmemory version                                          # 版本信息
 
 ---
 
-## 九、安全设计
+## 九、Web UI 设计
+
+三个视图 + 一个弹窗：
+
+| 视图 | 功能 |
+|------|------|
+| **Capture** | 输入内容、选择类型/标题/项目/标签、提交 |
+| **Search** | 搜索框 + 类型筛选、结果列表（含评分） |
+| **Today** | 今日条目时间线、刷新按钮 |
+
+**Entry 详情弹窗**：点击任意条目卡片弹出，显示完整信息，支持 Copy / Favorite / Archive / Delete 操作。
+
+暗色主题，GitHub 风格配色（`#0d1117` 背景，`#58a6ff` 强调色），响应式布局。
+
+---
+
+## 十、安全设计
 
 1. command 默认不直接执行，必须确认
 2. `dangerous=true` 的 command 需要二次确认
@@ -380,25 +401,22 @@ chmod -R 777 /
 
 ---
 
-## 十、构建目标
+## 十一、构建目标
 
 ```bash
-# Linux amd64
+# 使用构建脚本（输出到 dist/）
+./scripts/build.sh [version]
+
+# 手动构建
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/devmemory-linux-amd64 ./cmd/devmemory
-
-# Windows amd64
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/devmemory-windows-amd64.exe ./cmd/devmemory
-
-# macOS Intel
 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o dist/devmemory-darwin-amd64 ./cmd/devmemory
-
-# macOS Apple Silicon
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/devmemory-darwin-arm64 ./cmd/devmemory
 ```
 
 ---
 
-## 十一、产品原则
+## 十二、产品原则
 
 ```
 Capture first, organize later.

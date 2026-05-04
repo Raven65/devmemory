@@ -78,10 +78,10 @@ type Store interface {
 
     // 查询
     List(opts ListOptions) ([]*core.Entry, error)
-    GetByDate(date time.Time) ([]*core.Entry, error)
+    GetByDate(year, month, day int) ([]*core.Entry, error)
 
-    // 搜索
-    Search(query string, opts ListOptions) ([]*core.Entry, error)
+    // ID 前缀匹配
+    ResolveID(prefix string) (string, error)
 
     // 生命周期
     Open() error
@@ -231,17 +231,18 @@ func ImportJSON(data []byte) ([]*core.Entry, error)
 
 | 命令 | 说明 | 状态 |
 |------|------|------|
-| `devmemory version` | 版本信息 | TODO |
-| `devmemory serve` | 启动 HTTP server | TODO |
-| `devmemory add` | 新增 Entry | TODO |
-| `devmemory list` | 列表 | TODO |
-| `devmemory search` | 搜索 | TODO |
-| `devmemory show` | 详情 | TODO |
-| `devmemory delete` | 删除 | TODO |
-| `devmemory today` | 今日记录 | TODO |
-| `devmemory export today` | 导出 Markdown | TODO |
-| `devmemory export json` | 导出 JSON | TODO |
-| `devmemory import` | 导入 JSON | TODO |
+| `devmemory version` | 版本信息 | DONE |
+| `devmemory serve` | 启动 HTTP server | TODO (Week 3) |
+| `devmemory add` | 新增 Entry（含自动类型推断 + 危险检测） | DONE |
+| `devmemory list` | 列表（支持 --type/--project/--tag 筛选） | DONE |
+| `devmemory show` | 详情（支持短 ID 前缀） | DONE |
+| `devmemory delete` | 删除（含确认提示，--force 跳过） | DONE |
+| `devmemory edit` | 编辑（--title/--content/--type/--project/--tags/--favorite/--archive） | DONE |
+| `devmemory search` | 搜索（多词 + 加权排序） | DONE |
+| `devmemory today` | 今日记录（按时间线格式） | DONE |
+| `devmemory export today` | 导出 Markdown（-o 输出到文件） | DONE |
+| `devmemory export json` | 导出 JSON（-o 输出到文件） | DONE |
+| `devmemory import` | 导入 JSON（ID 冲突时覆盖） | DONE |
 
 ---
 
@@ -253,5 +254,7 @@ func ImportJSON(data []byte) ([]*core.Entry, error)
 | 数据库文件名 | devmemory.db |
 | 导出目录 | {DataDir}/exports/ |
 | 配置文件 | {DataDir}/config.json |
-| Go 版本 | >= 1.21 |
-| Module 名 | github.com/user/devmemory（待定） |
+| Go 版本 | >= 1.23 (toolchain 1.24.11) |
+| Module 名 | devmemory |
+| bbolt 版本 | v1.4.3 |
+| 依赖数 | 2（go.etcd.io/bbolt, golang.org/x/sys） |

@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"go build ./cmd/devmemory && go test ./...\",\"description\":\"Build and run all tests\"}",
+  "error": "Exit code 1\n# devmemory/cmd/devmemory\ncmd/devmemory/main.go:413:4: no new variables on left side of :=",
+  "timestamp": "2026-05-04T12:03:36.368Z",
+  "retry_count": 1
+}

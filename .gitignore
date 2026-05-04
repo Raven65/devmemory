@@ -1,0 +1,20 @@
+# Build output
+dist/
+*.exe
+
+# Database
+*.db
+devmemory-data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+vendor/
