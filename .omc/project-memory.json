@@ -110,14 +110,44 @@
   "hotPaths": [
     {
       "path": "cmd/devmemory/main.go",
-      "accessCount": 28,
-      "lastAccessed": 1777897265666,
+      "accessCount": 29,
+      "lastAccessed": 1777953150334,
       "type": "file"
     },
     {
       "path": "docs/PROGRESS.md",
-      "accessCount": 9,
-      "lastAccessed": 1777897182735,
+      "accessCount": 13,
+      "lastAccessed": 1777953579360,
+      "type": "file"
+    },
+    {
+      "path": "internal/server/static/app.js",
+      "accessCount": 5,
+      "lastAccessed": 1777953515367,
+      "type": "file"
+    },
+    {
+      "path": "docs/SPEC.md",
+      "accessCount": 3,
+      "lastAccessed": 1777953112377,
+      "type": "file"
+    },
+    {
+      "path": "docs/DESIGN.md",
+      "accessCount": 3,
+      "lastAccessed": 1777953112906,
+      "type": "file"
+    },
+    {
+      "path": "internal/server/static/index.html",
+      "accessCount": 3,
+      "lastAccessed": 1777953272834,
+      "type": "file"
+    },
+    {
+      "path": "internal/server/static/style.css",
+      "accessCount": 3,
+      "lastAccessed": 1777953318157,
       "type": "file"
     },
     {
@@ -133,21 +163,21 @@
       "type": "file"
     },
     {
-      "path": "docs/SPEC.md",
-      "accessCount": 2,
-      "lastAccessed": 1777896434321,
-      "type": "file"
-    },
-    {
-      "path": "docs/DESIGN.md",
-      "accessCount": 2,
-      "lastAccessed": 1777897682838,
-      "type": "file"
-    },
-    {
       "path": "docs/PLAN.md",
-      "accessCount": 1,
-      "lastAccessed": 1777895810627,
+      "accessCount": 2,
+      "lastAccessed": 1777953112627,
+      "type": "file"
+    },
+    {
+      "path": "internal/server/server.go",
+      "accessCount": 2,
+      "lastAccessed": 1777953150247,
+      "type": "file"
+    },
+    {
+      "path": "internal/server/handlers.go",
+      "accessCount": 2,
+      "lastAccessed": 1777953150377,
       "type": "file"
     },
     {
@@ -169,12 +199,6 @@
       "type": "file"
     },
     {
-      "path": "internal/server/server.go",
-      "accessCount": 1,
-      "lastAccessed": 1777896656612,
-      "type": "file"
-    },
-    {
       "path": "internal/server/exec.go",
       "accessCount": 1,
       "lastAccessed": 1777896657211,
@@ -184,30 +208,6 @@
       "path": "internal/server/exec_windows.go",
       "accessCount": 1,
       "lastAccessed": 1777896657681,
-      "type": "file"
-    },
-    {
-      "path": "internal/server/handlers.go",
-      "accessCount": 1,
-      "lastAccessed": 1777896722199,
-      "type": "file"
-    },
-    {
-      "path": "internal/server/static/index.html",
-      "accessCount": 1,
-      "lastAccessed": 1777896846721,
-      "type": "file"
-    },
-    {
-      "path": "internal/server/static/style.css",
-      "accessCount": 1,
-      "lastAccessed": 1777896847241,
-      "type": "file"
-    },
-    {
-      "path": "internal/server/static/app.js",
-      "accessCount": 1,
-      "lastAccessed": 1777896847720,
       "type": "file"
     }
   ],

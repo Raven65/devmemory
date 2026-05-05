@@ -15,6 +15,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+.omc/
 
 # Go
 vendor/

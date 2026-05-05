@@ -178,6 +178,8 @@ function renderModal(e) {
 
   document.getElementById('modal-toggle-fav').textContent = e.favorite ? 'Unfavorite' : 'Favorite';
   document.getElementById('modal-archive').textContent = e.archived ? 'Unarchive' : 'Archive';
+  document.getElementById('modal-actions-view').classList.remove('hidden');
+  document.getElementById('modal-actions-edit').classList.add('hidden');
 }
 
 function hideModal() {
@@ -196,6 +198,86 @@ document.getElementById('modal-copy').addEventListener('click', async () => {
     alert('Copy failed: ' + e.message);
   }
 });
+
+document.getElementById('modal-edit').addEventListener('click', () => {
+  if (!currentEntry) return;
+  renderEditModal(currentEntry);
+});
+
+document.getElementById('modal-edit-cancel').addEventListener('click', () => {
+  if (!currentEntry) return;
+  renderModal(currentEntry);
+  document.getElementById('modal-actions-edit').classList.add('hidden');
+  document.getElementById('modal-actions-view').classList.remove('hidden');
+});
+
+document.getElementById('modal-edit-save').addEventListener('click', async () => {
+  if (!currentEntry) return;
+  const fields = {
+    title: document.getElementById('edit-title').value.trim(),
+    content: document.getElementById('edit-content').value.trim(),
+    type: document.getElementById('edit-type').value,
+    project: document.getElementById('edit-project').value.trim(),
+    tags: parseTags(document.getElementById('edit-tags').value),
+  };
+  if (!fields.content) {
+    alert('Content cannot be empty');
+    return;
+  }
+  try {
+    await updateEntry(currentEntry.id, fields);
+    showModal(currentEntry.id);
+  } catch (e) {
+    alert('Save failed: ' + e.message);
+  }
+});
+
+function renderEditModal(e) {
+  document.getElementById('modal-title').textContent =
+    `Edit — ${e.type} ${e.id.slice(0, 8)}`;
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="field">
+      <div class="field-label">Title</div>
+      <input type="text" id="edit-title" value="${escapeAttr(e.title || '')}">
+    </div>
+    <div class="field">
+      <div class="field-label">Content</div>
+      <textarea id="edit-content" rows="4">${escapeHtml(e.content)}</textarea>
+    </div>
+    <div class="field">
+      <div class="field-label">Type</div>
+      <select id="edit-type">
+        <option value="command"${e.type==='command'?' selected':''}>Command</option>
+        <option value="url"${e.type==='url'?' selected':''}>URL</option>
+        <option value="snippet"${e.type==='snippet'?' selected':''}>Snippet</option>
+        <option value="prompt"${e.type==='prompt'?' selected':''}>Prompt</option>
+        <option value="note"${e.type==='note'?' selected':''}>Note</option>
+        <option value="issue"${e.type==='issue'?' selected':''}>Issue</option>
+        <option value="journal"${e.type==='journal'?' selected':''}>Journal</option>
+        <option value="business"${e.type==='business'?' selected':''}>Business</option>
+        <option value="task"${e.type==='task'?' selected':''}>Task</option>
+        <option value="file"${e.type==='file'?' selected':''}>File</option>
+        <option value="folder"${e.type==='folder'?' selected':''}>Folder</option>
+      </select>
+    </div>
+    <div class="field">
+      <div class="field-label">Project</div>
+      <input type="text" id="edit-project" value="${escapeAttr(e.project || '')}">
+    </div>
+    <div class="field">
+      <div class="field-label">Tags</div>
+      <input type="text" id="edit-tags" value="${escapeAttr((e.tags||[]).join(', '))}">
+    </div>`;
+
+  document.getElementById('modal-actions-view').classList.add('hidden');
+  document.getElementById('modal-actions-edit').classList.remove('hidden');
+}
+
+function escapeAttr(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 document.getElementById('modal-toggle-fav').addEventListener('click', async () => {
   if (!currentEntry) return;

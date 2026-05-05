@@ -241,3 +241,16 @@ textarea { resize: vertical; }
   padding: 40px;
   font-size: 14px;
 }
+
+.hidden { display: none !important; }
+
+/* Edit mode */
+#modal-body input,
+#modal-body textarea,
+#modal-body select {
+  margin-top: 4px;
+}
+
+#modal-body textarea {
+  min-height: 80px;
+}

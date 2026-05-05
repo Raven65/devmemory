@@ -4,10 +4,10 @@
 
 ---
 
-## 当前阶段：第 3 周 — HTTP Server + Web UI
+## 当前阶段：第一阶段完成
 
 **开始日期**：2026-05-04
-**目标**：本地 Web UI，REST API，浏览器交互
+**目标**：最小可用个人记忆库 — 完成
 
 ---
 
@@ -127,6 +127,7 @@
 | V15 | 短 ID 前缀匹配在 API 中工作 | DONE |
 | V16 | 危险命令自动标记（dangerous flag） | DONE |
 | V17 | Windows 交叉编译含 server 包成功 | DONE |
+| V18 | Web UI Entry Edit 功能（模态框内编辑所有字段） | DONE |
 
 ---
 
@@ -157,3 +158,4 @@
 | 2026-05-04 | 修复 Windows 双击 exe 闪退问题 |
 | 2026-05-04 | 完成第 2 周开发：show/delete/edit CLI + 短 ID 前缀匹配 + Markdown/JSON 导出导入 + 测试 |
 | 2026-05-04 | 完成第 3 周开发：HTTP Server + REST API（13 endpoints）+ Web UI（暗色主题）+ serve CLI 命令 |
+| 2026-05-05 | 完成第一阶段最后项：Web UI Entry Edit（模态框内编辑 title/content/type/project/tags） |
