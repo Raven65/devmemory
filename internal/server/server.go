@@ -14,21 +14,21 @@ import (
 	"time"
 
 	"devmemory/internal/config"
-	"devmemory/internal/store"
+	"devmemory/internal/service"
 )
 
 //go:embed static
 var staticFS embed.FS
 
 type Server struct {
-	store  store.Store
+	svc    *service.MemoryService
 	port   int
 	router *http.ServeMux
 }
 
-func New(s store.Store, port int) *Server {
+func New(svc *service.MemoryService, port int) *Server {
 	srv := &Server{
-		store:  s,
+		svc:    svc,
 		port:   port,
 		router: http.NewServeMux(),
 	}

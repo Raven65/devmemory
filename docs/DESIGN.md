@@ -23,67 +23,64 @@ DevMemory 要做的是：**一个本地运行的、零摩擦的信息捕获器 +
 - 公开发布、安装包、签名公证
 - AI 自动总结（至少第一阶段）
 
-### QuickPilot 和 DevFlow Journal 如何融合
-
-用一个统一模型 **Entry** 承载所有类型。QuickPilot 的动作库（command / snippet / prompt / URL / file / folder）和 DevFlow Journal 的日志（note / issue / journal / business / task）都是 Entry 的不同 Type。它们共享同一套搜索、标签、项目管理能力。区别只在于：
-
-- 动作类 Entry 有"执行"语义（复制、打开、运行）
-- 日志类 Entry 有"查看"语义（阅读、导出）
-
-这避免了过早拆分实体，同时保持模型简洁。
-
 ---
 
 ## 二、技术选型及理由
 
 | 选择 | 理由 |
 |------|------|
-| **Go** | 天然跨平台交叉编译、单二进制产出、CGO_ENABLED=0 编译零依赖、标准库足够 |
-| **bbolt** | 纯 Go 实现、单文件数据库、嵌入式无需进程、事务安全、key-value 足够 Entry 存储 |
-| **Local Web UI** | HTML/CSS/JS 是最轻量的跨平台 UI 方案、Go embed 嵌入后零外部依赖、浏览器即界面 |
-| **net/http** | 标准库、Go 1.22+ 原生路由匹配、无需框架 |
-| **Go embed** | 将前端资源编译进二进制，实现真正的单文件分发 |
-| **手动 flag 解析** | CLI 不用 cobra 等框架，手动解析参数，支持 flags 在任意位置，更轻量 |
+| **Go** | 天然跨平台交叉编译、单二进制产出、标准库足够 |
+| **bbolt** | 纯 Go 实现、单文件数据库、嵌入式无需进程、事务安全 |
+| **Fyne** | 纯 Go 跨平台原生 GUI 框架、无 CGO 以外的重依赖、三平台一致体验 |
+| **net/http** | 标准库、Go 1.22+ 原生路由匹配、Web UI 保留备用 |
+| **手动 flag 解析** | CLI 不用 cobra 等框架，手动解析参数，支持 flags 在任意位置 |
 
-### 为什么暂时不做原生 GUI
+### 为什么从 Web UI 迁移到 Fyne
 
-Qt 需要 CGO，Electron 体积巨大，Wails/Fyne 增加复杂度。第一阶段的目标是"能用"，不是"好看"。Local Web UI 在三个平台上都能用浏览器打开，是最小摩擦的方案。
+第一阶段使用 Local Web UI（Go embed + HTML/CSS/JS）快速验证了功能闭环。迁移到 Fyne 的原因：
+
+1. **原生体验**：Fyne 产生真正的原生窗口，不需要浏览器
+2. **离线可用**：不依赖浏览器，不占用浏览器 tab
+3. **系统集成**：更好的剪贴板、文件打开、快捷键支持
+4. **单进程**：不需要 HTTP server 中间层
+5. **分发简单**：单二进制，双击即用
+
+### Web UI 的处理
+
+Web UI 代码（`internal/server/`）暂时保留，降级为备用入口。不再作为主 UI 维护。
 
 ### 为什么适合个人使用且跨平台
 
-- 单二进制，Windows 双击自动启动 Web UI
-- Linux/macOS 命令行直接运行
+- 单二进制，Windows/macOS/Linux 原生窗口
 - 数据全部本地，portable mode 支持 U 盘随身携带
 - 无需安装、无需账号、无需网络
-- Go 交叉编译从 Linux 一键产出四个平台的二进制
+- Fyne 在三平台上渲染一致
 
 ---
 
 ## 三、整体架构
 
-### 模块图
+### 架构图
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   CLI (main.go)                  │
-│   add / list / show / delete / edit / search    │
-│   today / export / import / serve               │
-├─────────────────────────────────────────────────┤
-│               Local Web UI (embed)              │
-│         index.html / app.js / style.css         │
-├─────────────────────────────────────────────────┤
-│              HTTP API (net/http)                │
-│  GET/POST /api/entries, /api/search, ...        │
+┌──────────────────────────────────────────────────┐
+│                    main.go                        │
+│            模式选择：CLI / GUI / Serve            │
+├──────────┬──────────────────────┬────────────────┤
+│  CLI     │     Fyne UI          │   HTTP Server   │
+│  (保留)  │   (主 UI，新增)      │   (保留，降级)  │
+├──────────┴──────────────────────┴────────────────┤
+│                service 层（新增）                  │
+│          MemoryService 统一业务接口               │
 ├──────────┬──────────┬──────────┬────────────────┤
-│  Search  │  Action  │  Export  │    Config      │
-│  Engine  │ Detector │  Engine  │    Paths       │
+│  Search  │  Action  │  Export  │    Config       │
+│  Engine  │ Executor │  Engine  │    Paths        │
 ├──────────┴──────────┴──────────┴────────────────┤
-│                   Core Model                    │
-│              Entry / EntryType                  │
-├─────────────────────────────────────────────────┤
-│               bbolt Store                       │
-│      CRUD + ResolveID + GetByDate              │
-└─────────────────────────────────────────────────┘
+│                   Core Model                      │
+│              Entry / EntryType                    │
+├──────────────────────────────────────────────────┤
+│               bbolt Store                        │
+└──────────────────────────────────────────────────┘
 ```
 
 ### 目录结构
@@ -97,7 +94,7 @@ devmemory/
 │
 ├── cmd/
 │   └── devmemory/
-│       └── main.go              # CLI 入口 + 全部子命令 + serve
+│       └── main.go              # 入口：模式选择（CLI / GUI / Serve）
 │
 ├── internal/
 │   ├── core/
@@ -115,22 +112,40 @@ devmemory/
 │   │   └── search_test.go       # 测试（7 cases）
 │   │
 │   ├── action/
-│   │   └── executor.go          # 类型推断 DetectType + 危险检测 IsDangerous
+│   │   ├── executor.go          # Executor 接口 + DetectType + IsDangerous
+│   │   ├── executor_linux.go    # Linux: xdg-open, xclip
+│   │   ├── executor_windows.go  # Windows: cmd /c start, clip
+│   │   └── executor_darwin.go   # macOS: open, pbcopy
 │   │
 │   ├── export/
 │   │   ├── markdown.go          # ExportDailyMarkdown
 │   │   ├── json.go              # ExportJSON + ImportJSON
 │   │   └── export_test.go       # 测试（7 cases）
 │   │
-│   ├── server/
-│   │   ├── server.go            # HTTP server + embed + 路由 + 优雅关闭
-│   │   ├── handlers.go          # 全部 API handler
-│   │   ├── exec.go              # 浏览器打开（!windows）
-│   │   ├── exec_windows.go      # 浏览器打开（windows）
-│   │   └── static/              # go:embed 嵌入
-│   │       ├── index.html       # Web UI 页面（三视图 + 弹窗）
-│   │       ├── style.css        # 暗色主题（GitHub 风格）
-│   │       └── app.js           # 前端交互逻辑
+│   ├── service/
+│   │   └── memory_service.go    # 统一业务层，CLI 和 Fyne 共用
+│   │
+│   ├── server/                  # Web UI（保留，降级）
+│   │   ├── server.go
+│   │   ├── handlers.go
+│   │   ├── exec.go
+│   │   ├── exec_windows.go
+│   │   └── static/
+│   │       ├── index.html
+│   │       ├── style.css
+│   │       └── app.js
+│   │
+│   ├── ui/
+│   │   └── fyne/                # Fyne 原生桌面 UI（新增）
+│   │       ├── app.go           # Fyne app 初始化 + service 绑定
+│   │       ├── main_window.go   # 主窗口 + 左侧导航
+│   │       ├── page_capture.go  # Capture 页
+│   │       ├── page_search.go   # Search 页
+│   │       ├── page_today.go    # Today 页
+│   │       ├── page_actions.go  # Actions 页
+│   │       ├── page_knowledge.go# Knowledge 页
+│   │       ├── page_settings.go # Settings 页
+│   │       └── entry_dialog.go  # Entry 详情/编辑弹窗
 │   │
 │   └── config/
 │       ├── config.go            # Config struct + DefaultConfig
@@ -140,7 +155,7 @@ devmemory/
 │       └── paths_darwin.go      # ~/Library/Application Support/DevMemory
 │
 ├── scripts/
-│   └── build.sh                 # 四平台构建 → dist/
+│   └── build.sh                 # 多平台构建（fyne-cross 或本机）
 │
 ├── docs/
 │   ├── DESIGN.md                # 架构设计（本文件）
@@ -149,44 +164,39 @@ devmemory/
 │   └── PROGRESS.md              # 开发进度跟踪
 │
 └── dist/                        # 构建产物（.gitignore）
-    ├── devmemory-linux-amd64
-    ├── devmemory-windows-amd64.exe
-    ├── devmemory-darwin-amd64
-    └── devmemory-darwin-arm64
 ```
 
 ### 核心数据流
 
 ```
-用户输入 (CLI / Web UI)
+用户操作 (CLI / Fyne Widget)
     │
     ▼
-┌──────────┐    ┌─────────┐    ┌──────────┐
-│ CLI flag │───▶│  Core   │───▶│  Store   │
-│ 解析     │    │ Entry   │    │ (bbolt)  │
-└──────────┘    └─────────┘    └──────────┘
-                    │
-         ┌──────────┼──────────┐
-         ▼          ▼          ▼
-    ┌─────────┐ ┌────────┐ ┌────────┐
-    │ Search  │ │ Action │ │ Export │
-    │ Engine  │ │Detect  │ │ Engine │
-    └─────────┘ └────────┘ └────────┘
+┌──────────────┐
+│ MemoryService│  ← CLI 和 Fyne 共用
+└──────┬───────┘
+       │
+  ┌────┼────────────┬──────────┐
+  ▼    ▼            ▼          ▼
+Core  Store      Search     Action
+Entry (bbolt)   Engine    Executor
 ```
 
 ### Entry 生命周期
 
 ```
-Capture (add / Web UI POST)
-  → 自动类型推断 + 危险检测
-  → 存入 bbolt (CreatedAt, UpdatedAt)
-  → 可选设置 Tags, Project, Favorite
-    → Search (按权重排序返回)
-    → Copy (UseCount++, LastUsedAt 更新)
-    → Edit (修改内容, UpdatedAt 更新)
-    → Archive (Archived=true)
-    → Export (Markdown / JSON)
-    → Delete (物理删除)
+Capture (CLI add / Fyne Capture 页 / Web POST)
+  → service.CreateEntry(input)
+      → action.DetectType(content)
+      → core.NewEntry(type, content)
+      → action.IsDangerous(content) → entry.Dangerous
+      → store.Create(entry)
+  → Search (service.SearchEntries → search.Engine)
+  → Copy (service.CopyEntry → clipboard + UseCount++)
+  → Edit (service.UpdateEntry → store.Update)
+  → Archive (service.UpdateEntry → archived=true)
+  → Export (service.ExportTodayMarkdown / ExportJSON)
+  → Delete (service.DeleteEntry → store.Delete)
 ```
 
 ---
@@ -232,18 +242,43 @@ type Entry struct {
 
 ---
 
-## 五、解耦设计
+## 五、分层设计
 
-### CLI / Web UI / Core / Store 分层
+### Service 层（核心新增）
+
+Service 层是 CLI 和 Fyne UI 之间的桥梁，统一所有业务逻辑。
+
+```go
+type MemoryService struct {
+    store    store.Store
+    searcher *search.Engine
+    executor action.Executor
+}
+```
+
+**职责**：
+- 封装所有业务操作（创建、查询、搜索、导出等）
+- 自动类型推断、危险检测
+- UseCount/LastUsedAt 维护
+- 导出/导入操作
+
+**不负责**：
+- UI 展示逻辑
+- 平台差异（委托给 action.Executor）
+- 数据库选型（委托给 store.Store）
+
+### CLI / Fyne / Core / Store 分层
 
 - **Core** 定义 Entry 模型，不依赖任何存储或 UI
-- **Store** 通过 interface 暴露 CRUD + ResolveID + GetByDate，bbolt 是实现细节
-- **Search** 依赖 Core 模型，从 Store 获取数据后自行评分排序，不依赖 HTTP 或 CLI
-- **Action** 依赖 Core 模型，提供类型推断和危险检测，不依赖存储
-- **Export** 依赖 Core 模型，将 Entry 列表转为 Markdown/JSON，不依赖存储
-- **CLI** 调用 Core + Store + Search + Export + Server，不包含业务逻辑
-- **Server** 调用 Core + Store + Search + Export，暴露 HTTP API，embed 静态文件
-- **Web UI** 纯静态文件（HTML/CSS/JS），只通过 HTTP API 交互
+- **Store** 通过 interface 暴露 CRUD + ResolveID + GetByDate
+- **Search** 从 Store 获取数据后自行评分排序
+- **Action** 提供类型推断、危险检测、平台操作（打开/复制/执行）
+- **Export** 将 Entry 列表转为 Markdown/JSON
+- **Service** 统一编排 Core + Store + Search + Action + Export
+- **CLI** 调用 Service，不直接操作 Store
+- **Fyne UI** 调用 Service，widget 回调中不包含业务逻辑
+- **Server** 调用 Service（或保持直接调用，降级维护）
+- **Web UI** 纯静态文件，通过 HTTP API 交互
 
 ### Store Interface
 
@@ -256,7 +291,7 @@ type Store interface {
     Update(entry *core.Entry) error
     Delete(id string) error
     List(opts ListOptions) ([]*core.Entry, error)
-    ResolveID(prefix string) (string, error)    // 短 ID → 完整 ID
+    ResolveID(prefix string) (string, error)
     GetByDate(year, month, day int) ([]*core.Entry, error)
 }
 ```
@@ -264,20 +299,87 @@ type Store interface {
 ### 平台相关逻辑隔离
 
 ```
-server/exec.go           → 浏览器打开（!windows，使用 xdg-open/open）
-server/exec_windows.go   → 浏览器打开（windows，使用 cmd /c start）
+action/executor.go           # Executor 接口 + DetectType + IsDangerous
+action/executor_linux.go     # Linux: xdg-open, xclip
+action/executor_windows.go   # Windows: cmd /c start, clip
+action/executor_darwin.go    # macOS: open, pbcopy
 
-config/paths.go          → 通用逻辑（portable mode 检测）
-config/paths_linux.go    → ~/.config/devmemory
-config/paths_windows.go  → %APPDATA%/DevMemory
-config/paths_darwin.go   → ~/Library/Application Support/DevMemory
+config/paths.go              # 通用逻辑（portable mode 检测）
+config/paths_linux.go        # ~/.config/devmemory
+config/paths_windows.go      # %APPDATA%/DevMemory
+config/paths_darwin.go       # ~/Library/Application Support/DevMemory
 ```
-
-Go 编译时通过 build tag（`//go:build windows`）自动选择对应平台文件。
 
 ---
 
-## 六、数据目录策略
+## 六、Fyne UI 设计
+
+### 主窗口布局
+
+```
+┌─────────────────────────────────────────────┐
+│  DevMemory                          [—][□][×]│
+├──────────┬──────────────────────────────────┤
+│ Capture  │                                  │
+│ Search   │       右侧内容区域               │
+│ Today    │       (各页面内容)                │
+│ Actions  │                                  │
+│Knowledge │                                  │
+│ Settings │                                  │
+├──────────┴──────────────────────────────────┤
+│  状态栏：版本 / 数据路径 / 条目数           │
+└─────────────────────────────────────────────┘
+```
+
+左侧导航项：
+
+| 导航项 | 功能 |
+|--------|------|
+| Capture | 输入内容、选择类型/标题/项目/标签、提交 |
+| Search | 搜索框 + 结果列表 + 详情预览 |
+| Today | 今日条目时间线 |
+| Actions | 可复用动作（command/url/snippet/prompt/file/folder） |
+| Knowledge | 长期知识（note/issue/business/journal） |
+| Settings | 数据目录、导出导入、版本信息 |
+
+### 安全设计
+
+1. command 默认只复制，不直接执行
+2. 执行 command 必须弹确认框
+3. `dangerous=true` 的 command 需要二次确认
+4. 不保存密码、token、私钥
+5. 不自动提权
+6. 不静默后台危险执行
+
+---
+
+## 七、CLI 设计
+
+```bash
+devmemory                      # 默认启动 Fyne GUI
+devmemory gui                  # 启动 Fyne GUI（显式）
+devmemory serve [--port] [--no-open]  # 启动 Web UI（保留）
+devmemory add <content> [--type] [--title] [--project] [--tags]
+devmemory list [--type] [--project] [--tag]
+devmemory search <query> [--type]
+devmemory show <id>
+devmemory edit <id> [--title] [--content] [--type] ...
+devmemory delete <id> [--force]
+devmemory today
+devmemory export today|json [-o file]
+devmemory import <file>
+devmemory version
+```
+
+### 无参数行为
+
+- **双击 exe / 无参数**：启动 Fyne GUI
+- **CLI 子命令**：正常执行 CLI 操作
+- Windows 双击行为保持向后兼容
+
+---
+
+## 八、数据目录策略
 
 ### 默认数据目录
 
@@ -289,134 +391,54 @@ Go 编译时通过 build tag（`//go:build windows`）自动选择对应平台�
 
 ### Portable Mode
 
-如果可执行文件旁边存在 `devmemory-data/` 目录，则优先使用它。
-
-Portable 目录结构：
-
-```
-devmemory.exe
-devmemory-data/
-  devmemory.db
-  exports/
-  config.json
-```
+可执行文件旁边存在 `devmemory-data/` 目录时优先使用。
 
 ---
 
-## 七、HTTP API 设计
+## 九、构建目标
 
-```
-GET    /api/health                # 健康检查
-GET    /                          # Web UI（embed 静态文件）
+### 构建变化
 
-GET    /api/entries               # 列表（?type=&project=&tag= 筛选）
-POST   /api/entries               # 新增（JSON body）
-GET    /api/entries/{id}          # 详情（支持短 ID 前缀）
-PUT    /api/entries/{id}          # 更新（partial update）
-DELETE /api/entries/{id}          # 删除（支持短 ID 前缀）
+| 项目 | 第一阶段 (Web UI) | 第二阶段 (Fyne) |
+|------|-------------------|-----------------|
+| CGO | CGO_ENABLED=0 | CGO_ENABLED=1 |
+| 交叉编译 | go build 直接交叉 | fyne-cross 或目标平台 C 工具链 |
+| 本机开发 | go build | go build（需要 gcc） |
+| 依赖 | 2（bbolt + x/sys） | 2 + fyne（较多间接依赖） |
 
-GET    /api/search?q=&type=       # 搜索（返回 entry + score）
-GET    /api/today                 # 今日记录（date + entries）
-
-POST   /api/entries/{id}/copy     # 记录使用 + 返回 content
-
-GET    /api/export/today          # 导出今日 Markdown（attachment）
-GET    /api/export/json           # 导出全量 JSON（attachment）
-POST   /api/import/json           # 导入 JSON（数组或 {entries:[...]})
-```
-
-所有 API 端点加 CORS 头（`Access-Control-Allow-origin: *`），便于本地开发。
-
----
-
-## 八、CLI 设计
+### 本机开发
 
 ```bash
-devmemory serve [--port 8420] [--no-open]                   # 启动 Web UI
-devmemory add <content> [--type] [--title] [--project] [--tags]
-devmemory list [--type] [--project] [--tag]                  # 别名：ls
-devmemory search <query> [--type]                            # 别名：s
-devmemory show <id>                                          # 支持短 ID
-devmemory edit <id> [--title] [--content] [--type] ...       # 支持短 ID
-devmemory delete <id> [--force]                              # 别名：rm，支持短 ID
-devmemory today                                              # 今日记录
-devmemory export today [-o file]                             # Markdown
-devmemory export json [-o file]                              # JSON
-devmemory import <file>                                      # JSON（ID 冲突覆盖）
-devmemory version                                            # 版本信息
+# 需要 gcc
+go run ./cmd/devmemory
+go run ./cmd/devmemory gui
 ```
 
-### Windows 双击行为
-
-Windows 上双击 `devmemory.exe`（无参数）自动执行 `serve` 命令，启动 Web UI 并打开浏览器。其他平台无参数时显示帮助信息。
-
-### 自动类型推断规则
-
-```
-如果内容以 http:// 或 https:// 开头 → type=url
-如果内容看起来像 shell 命令（含 |, >, <, &&, ||, ;, $ 等）→ type=command
-否则 → type=note
-```
-
----
-
-## 九、Web UI 设计
-
-三个视图 + 一个弹窗：
-
-| 视图 | 功能 |
-|------|------|
-| **Capture** | 输入内容、选择类型/标题/项目/标签、提交 |
-| **Search** | 搜索框 + 类型筛选、结果列表（含评分） |
-| **Today** | 今日条目时间线、刷新按钮 |
-
-**Entry 详情弹窗**：点击任意条目卡片弹出，显示完整信息，支持 Copy / Favorite / Archive / Delete 操作。
-
-暗色主题，GitHub 风格配色（`#0d1117` 背景，`#58a6ff` 强调色），响应式布局。
-
----
-
-## 十、安全设计
-
-1. command 默认不直接执行，必须确认
-2. `dangerous=true` 的 command 需要二次确认
-3. 不保存密码、token、私钥
-4. 不自动提权
-5. 不做静默后台危险执行
-6. 对明显危险命令给出警告
-
-### 危险命令关键词
-
-```
-rm -rf
-del /s
-format
-shutdown
-mkfs
-:(){ :|:& };:
-dd if=
-> /dev/sd
-chmod -R 777 /
-```
-
----
-
-## 十一、构建目标
+### 本机构建
 
 ```bash
-# 使用构建脚本（输出到 dist/）
-./scripts/build.sh [version]
-
-# 手动构建
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/devmemory-linux-amd64 ./cmd/devmemory
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/devmemory-windows-amd64.exe ./cmd/devmemory
-CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o dist/devmemory-darwin-amd64 ./cmd/devmemory
-CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/devmemory-darwin-arm64 ./cmd/devmemory
+go build -o dist/devmemory ./cmd/devmemory
 ```
+
+### 交叉编译（推荐 fyne-cross）
+
+```bash
+fyne-cross windows -arch=amd64 -app-id devmemory
+fyne-cross darwin -arch=amd64 -app-id devmemory
+fyne-cross darwin -arch=arm64 -app-id devmemory
+fyne-cross linux -arch=amd64 -app-id devmemory
+```
+
+### 限制说明
+
+- 个人使用，不需要签名、公证
+- macOS 个人使用可手动放行
+- Windows 不需要 installer
+- fyne-cross 需要 Docker
 
 ---
 
-## 十二、产品原则
+## 十、产品原则
 
 ```
 Capture first, organize later.
@@ -430,14 +452,20 @@ search-first
 cross-platform
 low-dependency
 single-binary-friendly
+native-ui
 ```
 
-第一阶段成功的标准不是功能多，而是：
+第一阶段（Web UI）成功的标准已达成。第二阶段（Fyne）成功的标准：
 
 ```
-我学到一个命令，可以 5 秒内记进去；
-我遇到一个问题，可以随手记录排查过程；
-我几天后能搜回来；
-我能导出今天做了什么；
-Linux/Windows/macOS 都能跑。
+1. 能打开原生窗口；
+2. 能新增 Entry；
+3. 能搜索 Entry；
+4. 能查看今日记录；
+5. 能复制 snippet/prompt/command；
+6. 能打开 URL/file/folder；
+7. 能导出今日 Markdown；
+8. 能导入/导出 JSON；
+9. CLI 仍然可用；
+10. 现有数据不丢失。
 ```

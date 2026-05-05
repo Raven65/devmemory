@@ -91,7 +91,73 @@ type Store interface {
 
 ---
 
-## 三、Search 接口
+## 三、Service 层（新增）
+
+Service 层是 CLI 和 Fyne UI 之间的桥梁，统一所有业务逻辑。
+
+### MemoryService
+
+```go
+// internal/service/memory_service.go
+type MemoryService struct {
+    store    store.Store
+    searcher *search.Engine
+    executor action.Executor
+}
+
+func NewMemoryService(store store.Store, searcher *search.Engine, executor action.Executor) *MemoryService
+```
+
+### Service 方法
+
+```go
+// 创建
+func (s *MemoryService) CreateEntry(input CreateEntryInput) (*core.Entry, error)
+
+type CreateEntryInput struct {
+    Content string
+    Type    core.EntryType // 空则自动推断
+    Title   string
+    Project string
+    Tags    []string
+}
+
+// 查询
+func (s *MemoryService) GetEntry(id string) (*core.Entry, error)        // 支持 ResolveID 短前缀
+func (s *MemoryService) ListEntries(opts store.ListOptions) ([]*core.Entry, error)
+func (s *MemoryService) SearchEntries(query string, entryType core.EntryType) ([]*search.SearchResult, error)
+func (s *MemoryService) GetToday() ([]*core.Entry, error)
+
+// 操作
+func (s *MemoryService) CopyEntry(id string) (*core.Entry, error)       // 复制到剪贴板 + UseCount++
+func (s *MemoryService) OpenEntry(id string) error                       // 打开 URL/文件/文件夹
+func (s *MemoryService) ExecuteEntry(id string) error                    // 执行命令（含确认流程）
+
+// 修改
+func (s *MemoryService) UpdateEntry(id string, fields UpdateEntryFields) (*core.Entry, error)
+func (s *MemoryService) ToggleFavorite(id string) (*core.Entry, error)
+func (s *MemoryService) ToggleArchive(id string) (*core.Entry, error)
+func (s *MemoryService) DeleteEntry(id string) error
+
+// 导出
+func (s *MemoryService) ExportTodayMarkdown() (string, error)
+func (s *MemoryService) ExportJSON() ([]byte, error)
+func (s *MemoryService) ImportJSON(data []byte) (int, error)            // 返回导入条目数
+```
+
+### 职责边界
+
+| 层 | 负责 | 不负责 |
+|----|------|--------|
+| **Service** | 业务编排、类型推断、危险检测、UseCount 维护 | UI 展示、平台差异 |
+| **Store** | 数据持久化、CRUD、ID 解析 | 业务逻辑 |
+| **Search** | 多词匹配、权重评分、结果排序 | 数据存储 |
+| **Action** | 平台操作（打开/复制/执行）、类型推断、危险检测 | 业务流程 |
+| **UI (Fyne/CLI)** | 用户交互、输入收集、结果展示 | 业务逻辑 |
+
+---
+
+## 四、Search 接口
 
 ```go
 // internal/search/search.go
@@ -123,7 +189,48 @@ func (e *Engine) Search(query string, opts store.ListOptions) ([]*SearchResult, 
 
 ---
 
-## 四、Config 接口
+## 五、Action 接口
+
+```go
+// internal/action/executor.go
+type Executor interface {
+    OpenURL(url string) error
+    OpenFile(path string) error
+    OpenFolder(path string) error
+    RunCommand(cmd string) error
+    CopyToClipboard(text string) error
+}
+
+func NewExecutor() Executor
+func IsDangerous(cmd string) bool
+func DetectType(content string) core.EntryType
+```
+
+### 平台实现
+
+| 文件 | 平台 | 实现 |
+|------|------|------|
+| `executor_linux.go` | Linux | xdg-open, xclip |
+| `executor_windows.go` | Windows | cmd /c start, clip |
+| `executor_darwin.go` | macOS | open, pbcopy |
+
+### 危险命令关键词
+
+```
+rm -rf, del /s, format, shutdown, mkfs, dd if=, > /dev/sd, chmod -R 777 /
+```
+
+### 自动类型推断
+
+```
+http:// 或 https:// 开头 → url
+含 |, >, <, &&, ||, ;, $ 等符号 → command
+否则 → note
+```
+
+---
+
+## 六、Config 接口
 
 ```go
 // internal/config/config.go
@@ -151,40 +258,7 @@ Portable mode：可执行文件同目录下存在 `devmemory-data/` 时优先使
 
 ---
 
-## 五、Action 接口
-
-```go
-// internal/action/executor.go
-type Executor interface {
-    OpenURL(url string) error
-    OpenFile(path string) error
-    OpenFolder(path string) error
-    RunCommand(cmd string) error
-    CopyToClipboard(text string) error
-}
-
-func NewExecutor() Executor
-func IsDangerous(cmd string) bool
-func DetectType(content string) core.EntryType
-```
-
-### 危险命令关键词
-
-```
-rm -rf, del /s, format, shutdown, mkfs, dd if=, > /dev/sd, chmod -R 777 /
-```
-
-### 自动类型推断
-
-```
-http:// 或 https:// 开头 → url
-含 |, >, <, &&, ||, ;, $ 等符号 → command
-否则 → note
-```
-
----
-
-## 六、Export 接口
+## 七、Export 接口
 
 ```go
 // internal/export/markdown.go
@@ -197,7 +271,54 @@ func ImportJSON(data []byte) ([]*core.Entry, error)
 
 ---
 
-## 七、HTTP API
+## 八、Fyne UI 页面规格
+
+### 主窗口
+
+```
+┌─────────────────────────────────────────────┐
+│  DevMemory                          [—][□][×]│
+├──────────┬──────────────────────────────────┤
+│ Capture  │                                  │
+│ Search   │       右侧内容区域               │
+│ Today    │       (各页面内容)                │
+│ Actions  │                                  │
+│Knowledge │                                  │
+│ Settings │                                  │
+├──────────┴──────────────────────────────────┤
+│  状态栏：版本 / 数据路径 / 条目数           │
+└─────────────────────────────────────────────┘
+```
+
+### 页面规格
+
+| 页面 | 文件 | 功能 |
+|------|------|------|
+| Capture | `page_capture.go` | Content 多行输入 + Type 下拉 + Title/Project/Tags + 提交 |
+| Search | `page_search.go` | 搜索框 + 类型筛选 + 结果列表 + 详情弹窗 |
+| Today | `page_today.go` | 今日条目时间线 + 刷新 |
+| Actions | `page_actions.go` | 动作类型列表（command/url/snippet/prompt/file/folder）+ Copy/Open/Execute |
+| Knowledge | `page_knowledge.go` | 知识类型列表（note/issue/business/journal/task）+ 查看/编辑 |
+| Settings | `page_settings.go` | 数据目录 + 条目数 + 版本 + 导出导入按钮 |
+
+### Entry 弹窗
+
+| 文件 | 功能 |
+|------|------|
+| `entry_dialog.go` | Entry 详情查看 + 编辑模式 + Favorite / Archive / Delete 操作 |
+
+### 安全设计
+
+1. command 默认只复制，不直接执行
+2. 执行 command 必须弹确认框
+3. `dangerous=true` 的 command 需要二次确认
+4. 不保存密码、token、私钥
+5. 不自动提权
+6. 不静默后台危险执行
+
+---
+
+## 九、HTTP API（保留，降级）
 
 | Method | Path | 说明 |
 |--------|------|------|
@@ -218,7 +339,27 @@ func ImportJSON(data []byte) ([]*core.Entry, error)
 
 ---
 
-## 八、bbolt 存储约定
+## 十、CLI 子命令
+
+| 命令 | 说明 | 状态 |
+|------|------|------|
+| `devmemory` | 默认启动 Fyne GUI | TODO |
+| `devmemory gui` | 启动 Fyne GUI（显式） | TODO |
+| `devmemory serve [--port] [--no-open]` | 启动 Web UI | DONE |
+| `devmemory add <content> [--type] [--title] [--project] [--tags]` | 新增 Entry | DONE |
+| `devmemory list [--type] [--project] [--tag]` | 列表 | DONE |
+| `devmemory search <query> [--type]` | 搜索 | DONE |
+| `devmemory show <id>` | 详情（短 ID 前缀） | DONE |
+| `devmemory edit <id> [--title] [--content] [--type] ...` | 编辑 | DONE |
+| `devmemory delete <id> [--force]` | 删除 | DONE |
+| `devmemory today` | 今日记录 | DONE |
+| `devmemory export today\|json [-o file]` | 导出 | DONE |
+| `devmemory import <file>` | 导入 | DONE |
+| `devmemory version` | 版本信息 | DONE |
+
+---
+
+## 十一、bbolt 存储约定
 
 - Bucket 名称：`entries`
 - Key：Entry.ID (string)
@@ -227,26 +368,7 @@ func ImportJSON(data []byte) ([]*core.Entry, error)
 
 ---
 
-## 九、CLI 子命令
-
-| 命令 | 说明 | 状态 |
-|------|------|------|
-| `devmemory version` | 版本信息 | DONE |
-| `devmemory serve` | 启动 HTTP server | TODO (Week 3) |
-| `devmemory add` | 新增 Entry（含自动类型推断 + 危险检测） | DONE |
-| `devmemory list` | 列表（支持 --type/--project/--tag 筛选） | DONE |
-| `devmemory show` | 详情（支持短 ID 前缀） | DONE |
-| `devmemory delete` | 删除（含确认提示，--force 跳过） | DONE |
-| `devmemory edit` | 编辑（--title/--content/--type/--project/--tags/--favorite/--archive） | DONE |
-| `devmemory search` | 搜索（多词 + 加权排序） | DONE |
-| `devmemory today` | 今日记录（按时间线格式） | DONE |
-| `devmemory export today` | 导出 Markdown（-o 输出到文件） | DONE |
-| `devmemory export json` | 导出 JSON（-o 输出到文件） | DONE |
-| `devmemory import` | 导入 JSON（ID 冲突时覆盖） | DONE |
-
----
-
-## 十、常量与约定
+## 十二、常量与约定
 
 | 项目 | 值 |
 |------|-----|
@@ -255,6 +377,8 @@ func ImportJSON(data []byte) ([]*core.Entry, error)
 | 导出目录 | {DataDir}/exports/ |
 | 配置文件 | {DataDir}/config.json |
 | Go 版本 | >= 1.23 (toolchain 1.24.11) |
+| CGO | CGO_ENABLED=1（Fyne 需要） |
 | Module 名 | devmemory |
 | bbolt 版本 | v1.4.3 |
-| 依赖数 | 2（go.etcd.io/bbolt, golang.org/x/sys） |
+| 当前依赖 | go.etcd.io/bbolt, golang.org/x/sys |
+| 新增依赖 | fyne.io/fyne/v2（迁移 Step 2） |

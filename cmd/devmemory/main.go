@@ -10,13 +10,13 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"devmemory/internal/action"
 	"devmemory/internal/config"
 	"devmemory/internal/core"
-	"devmemory/internal/export"
-	"devmemory/internal/search"
 	"devmemory/internal/server"
+	"devmemory/internal/service"
 	"devmemory/internal/store"
+
+	fyneApp "devmemory/internal/ui/fyne"
 )
 
 var (
@@ -36,13 +36,9 @@ func waitForExit() {
 
 func main() {
 	if len(os.Args) < 2 {
-		// Double-click on Windows: auto-start serve
-		if runtime.GOOS == "windows" {
-			cmdServe(nil)
-			return
-		}
-		printUsage()
-		os.Exit(1)
+		// No args: launch Fyne GUI
+		cmdGUI()
+		return
 	}
 
 	cmd := os.Args[1]
@@ -51,6 +47,8 @@ func main() {
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("devmemory %s (commit: %s, built: %s)\n", Version, Commit, Date)
+	case "gui":
+		cmdGUI()
 	case "add":
 		cmdAdd(args)
 	case "list", "ls":
@@ -89,6 +87,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  version              Show version")
+	fmt.Fprintln(os.Stderr, "  gui                  Launch desktop GUI (default)")
 	fmt.Fprintln(os.Stderr, "  add <content>        Add a new entry")
 	fmt.Fprintln(os.Stderr, "  list                 List entries")
 	fmt.Fprintln(os.Stderr, "  show <id>            Show entry details")
@@ -102,8 +101,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  help                 Show this help")
 }
 
-// openStore initializes config, ensures data directory, and opens the store.
-func openStore() store.Store {
+// openService initializes config, ensures data directory, opens store, and creates a MemoryService.
+func openService() (*service.MemoryService, func()) {
 	cfg := config.DefaultConfig()
 	if err := config.EnsureDataDir(cfg.DataDir); err != nil {
 		fmt.Fprintf(os.Stderr, "error creating data directory: %v\n", err)
@@ -114,7 +113,7 @@ func openStore() store.Store {
 		fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
 		os.Exit(1)
 	}
-	return s
+	return service.NewMemoryService(s), func() { s.Close() }
 }
 
 // cmdAdd handles: devmemory add <content> [--type] [--title] [--project] [--tags]
@@ -127,32 +126,18 @@ func cmdAdd(args []string) {
 		os.Exit(1)
 	}
 
-	// Auto-detect type if not specified
-	if entryType == "" {
-		entryType = string(action.DetectType(content))
-	}
+	svc, cleanup := openService()
+	defer cleanup()
 
-	entry := core.NewEntry(core.EntryType(entryType), content)
-	if title != "" {
-		entry.Title = title
-	}
-	if project != "" {
-		entry.Project = project
-	}
-	if tags != "" {
-		entry.Tags = splitTags(tags)
-	}
-
-	// Flag dangerous commands
-	if entry.Type == core.EntryTypeCommand && action.IsDangerous(entry.Content) {
-		entry.Dangerous = true
-	}
-
-	s := openStore()
-	defer s.Close()
-
-	if err := s.Create(entry); err != nil {
-		fmt.Fprintf(os.Stderr, "error creating entry: %v\n", err)
+	entry, err := svc.CreateEntry(service.CreateEntryInput{
+		Content: content,
+		Type:    core.EntryType(entryType),
+		Title:   title,
+		Project: project,
+		Tags:    splitTags(tags),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -168,16 +153,14 @@ func cmdList(args []string) {
 	tag := fs.String("tag", "", "filter by tag")
 	fs.Parse(args)
 
-	s := openStore()
-	defer s.Close()
+	svc, cleanup := openService()
+	defer cleanup()
 
-	opts := store.ListOptions{
+	entries, err := svc.ListEntries(store.ListOptions{
 		Type:    core.EntryType(*entryType),
 		Project: *project,
 		Tag:     *tag,
-	}
-
-	entries, err := s.List(opts)
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error listing entries: %v\n", err)
 		os.Exit(1)
@@ -209,21 +192,14 @@ func cmdSearch(args []string) {
 		os.Exit(1)
 	}
 
-	s := openStore()
-	defer s.Close()
+	svc, cleanup := openService()
+	defer cleanup()
 
-	opts := store.ListOptions{
-		Type: core.EntryType(entryType),
-	}
-
-	entries, err := s.List(opts)
+	results, err := svc.SearchEntries(query, core.EntryType(entryType))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-
-	engine := search.NewEngine()
-	results := engine.Search(entries, query)
 
 	if len(results) == 0 {
 		fmt.Printf("No results for '%s'\n", query)
@@ -243,16 +219,16 @@ func cmdSearch(args []string) {
 
 // cmdToday handles: devmemory today
 func cmdToday(args []string) {
-	s := openStore()
-	defer s.Close()
+	svc, cleanup := openService()
+	defer cleanup()
 
-	now := time.Now()
-	entries, err := s.GetByDate(now.Year(), int(now.Month()), now.Day())
+	entries, err := svc.GetToday()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
+	now := time.Now()
 	fmt.Printf("Today's entries (%s)\n", now.Format("2006-01-02"))
 	fmt.Println(strings.Repeat("-", 50))
 
@@ -285,12 +261,10 @@ func cmdShow(args []string) {
 		os.Exit(1)
 	}
 
-	s := openStore()
-	defer s.Close()
+	svc, cleanup := openService()
+	defer cleanup()
 
-	id := resolveID(s, args[0])
-
-	entry, err := s.Get(id)
+	entry, err := svc.GetEntry(args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -337,18 +311,15 @@ func cmdDelete(args []string) {
 		}
 	}
 
-	s := openStore()
-	defer s.Close()
-
-	id := resolveID(s, args[0])
-
-	entry, err := s.Get(id)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
+	svc, cleanup := openService()
+	defer cleanup()
 
 	if !force {
+		entry, err := svc.GetEntry(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("Delete this entry?\n  [%s] %s\n\n  (y/N): ", entry.Type, entry.TitleOrContent())
 		var response string
 		fmt.Scanln(&response)
@@ -358,12 +329,12 @@ func cmdDelete(args []string) {
 		}
 	}
 
-	if err := s.Delete(id); err != nil {
+	if err := svc.DeleteEntry(args[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "error deleting entry: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Deleted entry %s\n", id[:8])
+	fmt.Printf("Deleted entry %s\n", args[0][:8])
 }
 
 // cmdEdit handles: devmemory edit <id> [--title] [--content] [--type] [--project] [--tags] [--favorite] [--archive]
@@ -374,40 +345,34 @@ func cmdEdit(args []string) {
 		os.Exit(1)
 	}
 
-	s := openStore()
-	defer s.Close()
-
-	id := resolveID(s, args[0])
-	rest := args[1:]
-
 	var title, content, entryType, project, tags string
 	var favorite, archive *bool
-	for i := 0; i < len(rest); i++ {
-		switch rest[i] {
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
 		case "--title":
 			i++
-			if i < len(rest) {
-				title = rest[i]
+			if i < len(args) {
+				title = args[i]
 			}
 		case "--content":
 			i++
-			if i < len(rest) {
-				content = rest[i]
+			if i < len(args) {
+				content = args[i]
 			}
 		case "--type", "-t":
 			i++
-			if i < len(rest) {
-				entryType = rest[i]
+			if i < len(args) {
+				entryType = args[i]
 			}
 		case "--project", "-p":
 			i++
-			if i < len(rest) {
-				project = rest[i]
+			if i < len(args) {
+				project = args[i]
 			}
 		case "--tags":
 			i++
-			if i < len(rest) {
-				tags = rest[i]
+			if i < len(args) {
+				tags = args[i]
 			}
 		case "--favorite":
 			b := true
@@ -418,39 +383,39 @@ func cmdEdit(args []string) {
 		}
 	}
 
-	entry, err := s.Get(id)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
+	svc, cleanup := openService()
+	defer cleanup()
 
+	fields := service.UpdateEntryFields{}
 	changed := false
 	if title != "" {
-		entry.Title = title
+		fields.Title = &title
 		changed = true
 	}
 	if content != "" {
-		entry.Content = content
+		fields.Content = &content
 		changed = true
 	}
 	if entryType != "" {
-		entry.Type = core.EntryType(entryType)
+		t := core.EntryType(entryType)
+		fields.Type = &t
 		changed = true
 	}
 	if project != "" {
-		entry.Project = project
+		fields.Project = &project
 		changed = true
 	}
 	if tags != "" {
-		entry.Tags = splitTags(tags)
+		t := splitTags(tags)
+		fields.Tags = &t
 		changed = true
 	}
 	if favorite != nil {
-		entry.Favorite = *favorite
+		fields.Favorite = favorite
 		changed = true
 	}
 	if archive != nil {
-		entry.Archived = *archive
+		fields.Archived = archive
 		changed = true
 	}
 
@@ -459,9 +424,8 @@ func cmdEdit(args []string) {
 		os.Exit(1)
 	}
 
-	entry.UpdatedAt = time.Now()
-
-	if err := s.Update(entry); err != nil {
+	entry, err := svc.UpdateEntry(args[0], fields)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error updating entry: %v\n", err)
 		os.Exit(1)
 	}
@@ -478,65 +442,46 @@ func cmdExport(args []string) {
 	}
 
 	subcmd := args[0]
-	rest := args[1:]
 	outputFile := ""
-	for i := 0; i < len(rest); i++ {
-		if rest[i] == "-o" && i+1 < len(rest) {
-			outputFile = rest[i+1]
+	for i := 1; i < len(args); i++ {
+		if args[i] == "-o" && i+1 < len(args) {
+			outputFile = args[i+1]
 			i++
 		}
 	}
 
+	svc, cleanup := openService()
+	defer cleanup()
+
 	switch subcmd {
 	case "today":
-		s := openStore()
-		defer s.Close()
-
-		now := time.Now()
-		entries, err := s.GetByDate(now.Year(), int(now.Month()), now.Day())
+		md, err := svc.ExportTodayMarkdown()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-
-		md, err := export.ExportDailyMarkdown(entries, now)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-
 		if outputFile != "" {
 			if err := os.WriteFile(outputFile, []byte(md), 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "error writing file: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Exported %d entries to %s\n", len(entries), outputFile)
+			fmt.Printf("Exported today's entries to %s\n", outputFile)
 		} else {
 			fmt.Print(md)
 		}
 
 	case "json":
-		s := openStore()
-		defer s.Close()
-
-		entries, err := s.List(store.ListOptions{})
+		data, err := svc.ExportJSON()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-
-		data, err := export.ExportJSON(entries)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-
 		if outputFile != "" {
 			if err := os.WriteFile(outputFile, data, 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "error writing file: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Exported %d entries to %s\n", len(entries), outputFile)
+			fmt.Printf("Exported entries to %s\n", outputFile)
 		} else {
 			fmt.Print(string(data))
 		}
@@ -562,25 +507,13 @@ func cmdImport(args []string) {
 		os.Exit(1)
 	}
 
-	entries, err := export.ImportJSON(data)
+	svc, cleanup := openService()
+	defer cleanup()
+
+	imported, err := svc.ImportJSON(data)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error parsing JSON: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
-	}
-
-	s := openStore()
-	defer s.Close()
-
-	imported := 0
-	for _, entry := range entries {
-		if err := s.Create(entry); err != nil {
-			// Entry with same ID exists, try update instead
-			if err := s.Update(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to import entry %s: %v\n", entry.ID[:8], err)
-				continue
-			}
-		}
-		imported++
 	}
 
 	fmt.Printf("Imported %d entries\n", imported)
@@ -606,12 +539,19 @@ func cmdServe(args []string) {
 	}
 	defer s.Close()
 
-	srv := server.New(s, *port)
+	svc := service.NewMemoryService(s)
+	srv := server.New(svc, *port)
 	fmt.Printf("DevMemory web UI: http://127.0.0.1:%d\n", *port)
 	if err := srv.Start(!*noOpen); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// cmdGUI launches the Fyne desktop GUI.
+func cmdGUI() {
+	a := fyneApp.NewApp()
+	a.Run()
 }
 
 // parseAddArgs extracts content and flags from mixed-position arguments.
@@ -663,16 +603,6 @@ func parseSearchArgs(args []string) (query, entryType string) {
 	}
 	query = strings.Join(queryParts, " ")
 	return
-}
-
-// resolveID resolves a short ID prefix to a full ID, exiting on error.
-func resolveID(s store.Store, prefix string) string {
-	fullID, err := s.ResolveID(prefix)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	return fullID
 }
 
 func splitTags(s string) []string {

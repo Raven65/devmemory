@@ -1,285 +1,295 @@
 # DevMemory — 路线图与任务拆解
 
-## 一、1 / 3 / 6 个月路线图
+---
 
-### 第 1 个月：最小可用个人记忆库
+## 阶段概览
 
-**目标**：能在 Linux 上日常使用，能交叉编译出三平台二进制。
-
-**必做**：
-1. Go 项目骨架 + module
-2. Entry 模型 + EntryType
-3. bbolt store（CRUD + 全量遍历）
-4. CLI：version / add / list / search / today
-5. 搜索引擎（字段匹配 + 权重排序）
-6. Local HTTP server + embed 静态资源
-7. Web UI：Capture / Search / Today 三个页面
-8. Markdown daily export
-9. JSON backup / export / import
-10. 四平台构建脚本
-11. Portable mode 数据目录
-
-**不做**：
-- Session / weekly report
-- Command 执行（仅复制）
-- 全文索引引擎
-- 原生 GUI / 系统托盘 / 全局快捷键
-- 浏览器插件 / 移动端
-- AI 总结
-
-**验收标准**：
-1. `./devmemory add "ss -tinp" --type command --tags linux,tcp` 可新增
-2. `./devmemory search "tcp"` 可搜索
-3. `./devmemory today` 可列出今日记录
-4. `./devmemory serve` 启动 HTTP server 并打开浏览器
-5. 浏览器中可 Capture / Search / 查看今天
-6. `./devmemory export today -o daily.md` 导出 Markdown
-7. `./devmemory export json -o backup.json` 导出 JSON
-8. `./devmemory import backup.json` 可导入
-9. 四平台编译成功
-
-**风险和砍功能边界**：
-- bbolt 性能在上千条记录内无问题，暂无风险
-- 如果前端 HTML/JS 工作量超预期，先只做纯文本渲染，不做复杂交互
-- 搜索第一阶段用内存遍历 + 字符串匹配，不做倒排索引
+| 阶段 | 目标 | 状态 |
+|------|------|------|
+| **第一阶段** | 最小可用个人记忆库（Web UI + CLI） | **DONE** |
+| **第二阶段** | Fyne 原生桌面 UI 迁移（插入） | TODO |
+| **第三阶段** | 日常可用的开发者工作记忆系统 | TODO |
+| **第四阶段** | 稳定的跨平台个人效率与知识工具 | TODO |
 
 ---
 
-### 第 3 个月：日常可用的开发者工作记忆系统
+## 第一阶段回顾（已完成）
+
+**开始日期**：2026-05-04
+**完成日期**：2026-05-05
+
+**成果**：
+- CLI 全部子命令（add/list/search/today/show/delete/edit/export/import/version）
+- HTTP Server + REST API（13 endpoints）
+- Web UI（Capture / Search / Today + Entry 详情编辑模态框）
+- bbolt 存储 + 加权搜索 + Markdown/JSON 导出导入
+- 四平台交叉编译
+
+---
+
+## 第二阶段：Fyne 原生桌面 UI 迁移
+
+### 迁移策略
+
+增量迁移，不重写。核心原则：
+
+1. **先抽取 Service 层**：CLI 和 Fyne UI 共用同一套业务逻辑
+2. **CLI 不变**：重构为调用 Service，行为完全一致
+3. **Web UI 保留但降级**：`internal/server/` 代码不动，降级为备用入口
+4. **Fyne UI 只调用 Service**：widget 回调中不含业务逻辑
+5. **数据不丢失**：同一 bbolt 数据库，同一数据目录
+
+### 7 步迁移计划
+
+---
+
+#### Step 1：抽取 Service 层 + CLI 重构
+
+**目标**：CLI 和未来 Fyne UI 共用同一套业务逻辑，消除 main.go 和 handlers.go 中的重复代码。
+
+**任务**：
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 1.1 | 创建 `internal/service/memory_service.go` | MemoryService struct，持有 Store + SearchEngine + Executor |
+| 1.2 | 实现 `CreateEntry(input)` | 自动 DetectType + IsDangerous + NewEntry + store.Create |
+| 1.3 | 实现 `SearchEntries(query, type)` | 调用 search.Engine |
+| 1.4 | 实现 `GetToday()` | 调用 store.GetByDate |
+| 1.5 | 实现 `CopyEntry(id)` | clipboard + UseCount++ + LastUsedAt |
+| 1.6 | 实现 `UpdateEntry(id, fields)` | store.Get + 修改字段 + store.Update |
+| 1.7 | 实现 `DeleteEntry(id)` | store.Delete |
+| 1.8 | 实现 `ExportTodayMarkdown()` | 调用 export.ExportDailyMarkdown |
+| 1.9 | 实现 `ExportJSON()` / `ImportJSON()` | 调用 export 包 |
+| 1.10 | 实现 `ListEntries(opts)` | store.List |
+| 1.11 | 实现 `GetEntry(id)` | ResolveID + store.Get |
+| 1.12 | 重构 `cmd/devmemory/main.go` | 所有 CLI 子命令改为调用 Service，删除内联业务逻辑 |
+| 1.13 | 更新 `internal/server/handlers.go` | handler 调用 Service 而非直接操作 Store（可选，降级优先级） |
+
+**验收**：
+- `go test ./...` 全部通过
+- CLI 行为与重构前完全一致
+- main.go 中不再有 DetectType / IsDangerous 等业务逻辑
+
+---
+
+#### Step 2：添加 Fyne 依赖 + 骨架窗口
+
+**目标**：`devmemory` 或 `devmemory gui` 能打开一个 Fyne 窗口。
+
+**任务**：
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 2.1 | `go get fyne.io/fyne/v2` | 添加 Fyne 依赖 |
+| 2.2 | 创建 `internal/ui/fyne/app.go` | Fyne app 初始化 + Service 绑定 |
+| 2.3 | 创建 `internal/ui/fyne/main_window.go` | 主窗口 + 左侧导航（6 个 tab） |
+| 2.4 | 更新 `cmd/devmemory/main.go` | 无参数或 `gui` 子命令启动 Fyne |
+| 2.5 | 验证 CGO 编译 | 确保 `go build` 在开发机通过（需要 gcc） |
+
+**验收**：
+- `go run ./cmd/devmemory` 打开原生窗口
+- 左侧导航可切换，右侧显示占位内容
+- CLI 子命令仍然正常
+
+---
+
+#### Step 3：Capture 页
+
+**目标**：Fyne Capture 页能新增 Entry，与 Web UI Capture 功能对等。
+
+**任务**：
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 3.1 | 创建 `internal/ui/fyne/page_capture.go` | Capture 页布局 |
+| 3.2 | Content 输入框（多行） | 主要输入区 |
+| 3.3 | Type 下拉选择（Auto-detect + 11 种类型） | 可手动指定类型 |
+| 3.4 | Title / Project / Tags 输入 | 可选字段 |
+| 3.5 | 提交按钮 → 调用 Service.CreateEntry | 提交后清空表单 |
+| 3.6 | 提交反馈（成功/失败提示） | Fyne dialog |
+
+**验收**：
+- 在 Fyne 中输入内容并提交
+- `devmemory list` 能看到新增的 Entry
+- 类型自动推断正确
+
+---
+
+#### Step 4：Search 页
+
+**目标**：Fyne Search 页能搜索并查看 Entry。
+
+**任务**：
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 4.1 | 创建 `internal/ui/fyne/page_search.go` | Search 页布局 |
+| 4.2 | 搜索输入框 + 类型筛选下拉 | 回车或按钮触发搜索 |
+| 4.3 | 结果列表（显示 type / title / time / score） | 按评分排序 |
+| 4.4 | 点击结果 → Entry 详情弹窗 | 复用 entry_dialog.go |
+| 4.5 | 创建 `internal/ui/fyne/entry_dialog.go` | Entry 详情/编辑弹窗 |
+
+**验收**：
+- 搜索关键词返回结果
+- 结果按权重排序
+- 点击结果可查看完整 Entry
+
+---
+
+#### Step 5：Today / Actions / Knowledge 页
+
+**目标**：完成核心查看页面。
+
+**任务**：
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 5.1 | 创建 `internal/ui/fyne/page_today.go` | 今日条目时间线 |
+| 5.2 | 创建 `internal/ui/fyne/page_actions.go` | 可复用动作（command/url/snippet/prompt/file/folder） |
+| 5.3 | 创建 `internal/ui/fyne/page_knowledge.go` | 长期知识（note/issue/business/journal/task） |
+| 5.4 | Copy 按钮 → Service.CopyEntry | 复制到剪贴板 + UseCount++ |
+| 5.5 | Open 按钮 → Executor.OpenURL/OpenFile | 打开 URL/文件/文件夹 |
+| 5.6 | Execute 按钮（command 类型） | 确认框 → 二次确认（dangerous） → Executor.RunCommand |
+| 5.7 | Entry 操作：Favorite / Archive / Edit / Delete | 统一在 entry_dialog 中 |
+
+**验收**：
+- Today 页显示当日条目
+- Actions 页只显示动作类型
+- Knowledge 页只显示日志类型
+- Copy/Open/Execute 功能正常
+- Dangerous 命令需二次确认
+
+---
+
+#### Step 6：Settings 页 + 导出导入
+
+**目标**：完成设置和数据管理功能。
+
+**任务**：
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 6.1 | 创建 `internal/ui/fyne/page_settings.go` | Settings 页布局 |
+| 6.2 | 显示数据目录路径、条目总数、版本号 | 只读信息展示 |
+| 6.3 | Export Today Markdown 按钮 | 选择保存路径 → Service.ExportTodayMarkdown |
+| 6.4 | Export JSON 按钮 | 选择保存路径 → Service.ExportJSON |
+| 6.5 | Import JSON 按钮 | 选择文件 → Service.ImportJSON |
+| 6.6 | 状态栏（底部） | 显示版本 / 数据路径 / 条目数 |
+
+**验收**：
+- Settings 页正确显示信息
+- 导出 Markdown / JSON 功能正常
+- 导入 JSON 功能正常（ID 冲突覆盖）
+
+---
+
+#### Step 7：构建脚本 + README 更新
+
+**目标**：Fyne 版本可构建、可分发。
+
+**任务**：
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 7.1 | 更新 `scripts/build.sh` | 支持 CGO_ENABLED=1 + fyne-cross |
+| 7.2 | 更新 `README.md` | 添加 Fyne UI 说明、构建依赖（gcc）、截图 |
+| 7.3 | 验证四平台构建 | fyne-cross 或本机编译 |
+| 7.4 | 更新 PROGRESS.md | 标记所有步骤完成 |
+
+**验收**：
+- `go build` 本机编译通过
+- `fyne-cross` 交叉编译成功（Linux/macOS/Windows）
+- README 包含 Fyne 相关说明
+
+---
+
+---
+
+## 第三阶段：日常可用的开发者工作记忆系统
 
 **目标**：每天工作时愿意打开它，能管理常用资源、记录排障、导出周报。
 
-**必做**：
-1. Project 字段增强（project list / filter）
-2. Issue / Business knowledge 模板
-3. Prompt / snippet 管理体验优化
-4. Command 执行确认流程
-5. Dangerous command 二次确认
-6. Favorite 标记 + 筛选
-7. UseCount / LastUsedAt 统计
-8. Tag 管理（autocomplete / rename / merge）
-9. Weekly report export
-10. Portable mode 完善
-11. Web UI 改进（Entry 编辑、分页、快捷键）
+### 功能清单
 
-**不做**：
-- 云同步 / 多用户
-- 全文搜索引擎（如 Bleve）
-- 原生 GUI
-- 浏览器插件
+| # | 功能 | 状态 | 说明 |
+|---|------|------|------|
+| 3.1 | Project 字段增强 | TODO | project list / filter 子命令，Fyne Project 筛选 |
+| 3.2 | Issue / Business knowledge 模板 | TODO | 预设字段模板，快速填入 |
+| 3.3 | Prompt / snippet 管理优化 | TODO | 语法高亮、分类、快速调用 |
+| 3.4 | Command 执行确认流程 | 部分完成 | CLI 已有 dangerous 检测；Fyne 中需弹确认框 |
+| 3.5 | Dangerous command 二次确认 | 部分完成 | 同上，CLI 已有 IsDangerous |
+| 3.6 | Favorite 标记 + 筛选 | 部分完成 | Favorite 字段已有；筛选 UI/CLI 待做 |
+| 3.7 | UseCount / LastUsedAt 统计 | **DONE** | Copy 时已维护 |
+| 3.8 | Tag 管理 | TODO | autocomplete / rename / merge |
+| 3.9 | Weekly report export | TODO | 扩展 export 包，按周汇总 |
+| 3.10 | Portable mode 完善 | TODO | 数据迁移、多实例检测 |
+| 3.11 | Entry 分页 | TODO | 大量条目时的分页加载 |
+| 3.12 | 快捷键支持 | TODO | Fyne 全局快捷键（快速 Capture、快速 Search） |
 
-**验收标准**：
+### 验收标准
+
 1. 每天使用无明显摩擦
 2. 常用 command / URL / prompt 可快速复制
 3. 排障过程可记录并搜索回来
 4. 日报和周报可导出
-5. portable mode 可在 U 盘上运行
+5. Portable mode 可在 U 盘上运行
 
-**风险和砍功能边界**：
+### 风险和砍功能边界
+
 - Command 执行安全边界需谨慎，宁可保守
 - Tag autocomplete 如果复杂则推迟，先做手动输入
-- Web UI 改进按需，不做过度设计
+- 快捷键按 Fyne 能力实现，不做超出框架能力的定制
 
 ---
 
-### 第 6 个月：稳定的跨平台个人效率与知识工具
+## 第四阶段：稳定的跨平台个人效率与知识工具
 
 **目标**：长期积累上千条记录、搜索仍然快、数据可迁移、三平台自用。
 
-**必做**：
-1. 全文搜索优化（Bleve 或类似纯 Go 方案）
-2. Entry 关联关系（related entries）
-3. Project timeline 视图
-4. Markdown vault import/export（兼容 Obsidian 格式）
-5. Backup / restore（自动备份策略）
-6. Template variables（命令模板可填参数）
+### 功能清单
 
-**可选（调研后决定）**：
-- 桌面壳（Fyne / Wails）
-- 全局快捷键
-- AI 总结接口
-- Workflow 自动化
+| # | 功能 | 状态 | 说明 |
+|---|------|------|------|
+| 4.1 | 全文搜索优化 | TODO | Bleve 或类似纯 Go 方案，替代内存全遍历 |
+| 4.2 | Entry 关联关系 | TODO | related entries，手动/自动关联 |
+| 4.3 | Project timeline 视图 | TODO | 按项目维度查看条目时间线 |
+| 4.4 | Markdown vault 兼容 | TODO | Obsidian 格式导入导出 |
+| 4.5 | Backup / restore | TODO | 自动备份策略（定时备份、备份数量限制） |
+| 4.6 | Template variables | TODO | 命令模板可填参数，如 `ping {{host}}` |
 
-**验收标准**：
+### 可选调研项
+
+| # | 功能 | 说明 |
+|---|------|------|
+| O.1 | ~~桌面壳（Fyne / Wails）~~ | **已在第二阶段实现** |
+| O.2 | 全局快捷键 | 系统级快捷键唤起 Capture |
+| O.3 | AI 总结接口 | 可选接口，不嵌入核心流程 |
+| O.4 | Workflow 自动化 | 条件触发、批量操作 |
+
+### 验收标准
+
 1. 1000+ 条记录搜索 < 200ms
 2. 数据备份和迁移无损
 3. 三平台二进制正常运行
 4. 核心逻辑无 GUI 依赖
 
-**风险和砍功能边界**：
+### 风险和砍功能边界
+
 - 全文搜索如 Bleve 引入 CGO 则换成纯 Go 方案
 - AI 总结仅作可选接口，不嵌入核心流程
-- 桌面壳仅调研，不确定就推迟
+- Entry 关联如复杂度过高则推迟
 
 ---
 
-## 二、第 1 个月详细任务拆解（按周）
+## 简化假设
 
-### 第 1 周：Core + Store + CLI
-
-**任务**：
-1. 初始化 Go module，定义 `devmemory` 项目
-2. 实现 `internal/core/entry.go` 和 `types.go` — Entry 模型
-3. 实现 `internal/store/store.go` — Store interface
-4. 实现 `internal/store/bbolt_store.go` — bbolt CRUD
-5. 实现 `internal/config/paths.go` + 平台文件 — 数据目录
-6. 实现 `internal/search/search.go` + `scorer.go` — 搜索
-7. 实现 `cmd/devmemory/main.go` — CLI 入口
-8. 实现 CLI 子命令：version / add / list / search / today
-9. 编写 `internal/store/bbolt_store_test.go` — 基础测试
-10. 编写 `scripts/build.sh`
-11. 编写 `README.md` 第一版
-
-**产出**：
-- 可编译运行的 `devmemory` 二进制
-- 可 add / list / search / today
-
-**测试**：
-- `go test ./internal/store/...` 通过
-- `go test ./internal/search/...` 通过
-- 手动测试 CLI 命令
-
-**可运行命令**：
-```bash
-go build -o devmemory ./cmd/devmemory
-./devmemory version
-./devmemory add "ss -tinp | grep ESTAB" --type command --tags linux,tcp
-./devmemory add "https://docs.kernel.org/networking/" --type url --tags linux,kernel
-./devmemory list
-./devmemory search "tcp"
-./devmemory today
-```
-
-**风险**：
-- bbolt API 熟悉成本：很低，文档清晰
-- 搜索权重调优：先用简单权重，后续迭代
-
----
-
-### 第 2 周：Search + Today + Markdown Export
-
-**任务**：
-1. 搜索权重优化（title > tag > project > content）
-2. Entry update / delete / archive
-3. CLI：show / delete / edit
-4. `internal/export/markdown.go` — Markdown daily export
-5. `internal/export/json.go` — JSON export / import
-6. CLI：`export today` / `export json` / `import`
-7. 测试：export / import round-trip
-
-**产出**：
-- 完整的 CLI 命令集
-- Markdown 和 JSON 导出
-
-**测试**：
-- Export + Import round-trip 数据无损
-- Markdown 输出格式正确
-
-**可运行命令**：
-```bash
-./devmemory show <id>
-./devmemory delete <id>
-./devmemory export today -o daily.md
-./devmemory export json -o backup.json
-./devmemory import backup.json
-```
-
-**风险**：
-- JSON import 需处理 ID 冲突（策略：保留原 ID，如已存在则覆盖）
-
----
-
-### 第 3 周：Local Web UI + HTTP API
-
-**任务**：
-1. `internal/server/server.go` — HTTP server
-2. `internal/server/handlers.go` — REST API handlers
-3. `web/index.html` + `app.js` + `style.css` — 极简前端
-4. Go embed 静态资源
-5. `serve` 命令：启动 server + 自动打开浏览器
-6. Capture 页面
-7. Search 页面
-8. Today 页面
-9. Entry Detail 页面
-
-**产出**：
-- `./devmemory serve` 启动 Web UI
-- 浏览器可操作所有功能
-
-**测试**：
-- curl 测试所有 API endpoint
-- 浏览器手动测试 UI
-
-**可运行命令**：
-```bash
-./devmemory serve
-# 浏览器打开 http://127.0.0.1:8420
-```
-
-**风险**：
-- 前端工作量可能超预期：保持极简，先做功能再做美观
-- 浏览器自动打开在不同平台可能需要调通
-
----
-
-### 第 4 周：JSON Backup + Cross Build + README
-
-**任务**：
-1. JSON import 完善和错误处理
-2. Portable mode 检测
-3. 四平台交叉编译脚本
-4. 实际编译测试
-5. README 完善（安装、使用、截图）
-6. 整体 bug 修复和体验打磨
-7. Entry edit（Web UI）
-
-**产出**：
-- 四个平台二进制
-- 完整 README
-- 可发布的个人使用版本
-
-**测试**：
-- 四平台编译成功
-- Linux 实际运行测试
-- Export / Import 完整流程
-
-**可运行命令**：
-```bash
-./scripts/build.sh
-ls -la dist/
-```
-
-**风险**：
-- macOS 二进制无法在本机测试（无 macOS 环境）：编译应成功，逻辑测试靠 Linux
-- Windows exe 同理
-
----
-
-## 三、简化假设（第 1 个月）
-
-1. 搜索用内存全遍历 + 字符串匹配，不做倒排索引
+1. 搜索用内存全遍历 + 字符串匹配，不做倒排索引（第四阶段考虑升级）
 2. bbolt 单 bucket 存所有 Entry，JSON 序列化
-3. 前端不用框架，原生 HTML/CSS/JS
-4. CLI 不用 cobra，用标准库 flag + 子命令分发（或轻量 cobra）
-5. 不做分页，先支持全量返回（个人使用数据量可控）
-6. HTTP server 不做 TLS，纯 localhost
-7. 不做用户认证（仅本地访问）
-8. 默认端口 8420（可配置）
-
----
-
-## 四、第 1 周交付清单
-
-- [ ] `go.mod` 初始化
-- [ ] `internal/core/types.go` — EntryType 常量
-- [ ] `internal/core/entry.go` — Entry struct
-- [ ] `internal/store/store.go` — Store interface
-- [ ] `internal/store/bbolt_store.go` — bbolt 实现
-- [ ] `internal/config/paths.go` + 平台文件 — 数据目录
-- [ ] `internal/search/search.go` — 搜索逻辑
-- [ ] `internal/search/scorer.go` — 权重评分
-- [ ] `cmd/devmemory/main.go` — CLI 入口 + 所有子命令
-- [ ] `internal/store/bbolt_store_test.go` — Store 测试
-- [ ] `internal/search/search_test.go` — Search 测试
-- [ ] `scripts/build.sh` — 构建脚本
-- [ ] `README.md` — 第一版文档
+3. Web UI 保留但不再作为主 UI 维护
+4. CLI 不用 cobra，手动 flag 解析
+5. 不做分页，先支持全量返回（第三阶段考虑）
+6. HTTP server 纯 localhost，无 TLS，无认证
+7. 默认端口 8420
+8. CGO_ENABLED=1（Fyne 需要）
+9. 不做签名、公证、安装包
+10. 不做云同步、多用户、浏览器插件、移动端

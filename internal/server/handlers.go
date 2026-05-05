@@ -4,14 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
-	"devmemory/internal/action"
 	"devmemory/internal/core"
-	"devmemory/internal/export"
-	"devmemory/internal/search"
+	"devmemory/internal/service"
 	"devmemory/internal/store"
 )
 
@@ -36,7 +32,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		Tag:     r.URL.Query().Get("tag"),
 	}
 
-	entries, err := s.store.List(opts)
+	entries, err := s.svc.ListEntries(opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -58,27 +54,15 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if input.Content == "" {
-		writeError(w, http.StatusBadRequest, "content is required")
-		return
-	}
-
-	entryType := input.Type
-	if entryType == "" {
-		entryType = string(action.DetectType(input.Content))
-	}
-
-	entry := core.NewEntry(core.EntryType(entryType), input.Content)
-	entry.Title = input.Title
-	entry.Project = input.Project
-	entry.Tags = input.Tags
-
-	if entry.Type == core.EntryTypeCommand && action.IsDangerous(entry.Content) {
-		entry.Dangerous = true
-	}
-
-	if err := s.store.Create(entry); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	entry, err := s.svc.CreateEntry(service.CreateEntryInput{
+		Content: input.Content,
+		Type:    core.EntryType(input.Type),
+		Title:   input.Title,
+		Project: input.Project,
+		Tags:    input.Tags,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -88,19 +72,10 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	// Try direct ID first, then prefix match
-	entry, err := s.store.Get(id)
+	entry, err := s.svc.GetEntry(id)
 	if err != nil {
-		fullID, resolveErr := s.store.ResolveID(id)
-		if resolveErr != nil {
-			writeError(w, http.StatusNotFound, "entry not found")
-			return
-		}
-		entry, err = s.store.Get(fullID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "entry not found")
-			return
-		}
+		writeError(w, http.StatusNotFound, "entry not found")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, entry)
@@ -108,20 +83,6 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-
-	entry, err := s.store.Get(id)
-	if err != nil {
-		fullID, resolveErr := s.store.ResolveID(id)
-		if resolveErr != nil {
-			writeError(w, http.StatusNotFound, "entry not found")
-			return
-		}
-		entry, err = s.store.Get(fullID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "entry not found")
-			return
-		}
-	}
 
 	var input struct {
 		Type     *string  `json:"type"`
@@ -138,32 +99,33 @@ func (s *Server) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fields := service.UpdateEntryFields{}
 	if input.Type != nil {
-		entry.Type = core.EntryType(*input.Type)
+		t := core.EntryType(*input.Type)
+		fields.Type = &t
 	}
 	if input.Title != nil {
-		entry.Title = *input.Title
+		fields.Title = input.Title
 	}
 	if input.Content != nil {
-		entry.Content = *input.Content
+		fields.Content = input.Content
 	}
 	if input.Project != nil {
-		entry.Project = *input.Project
+		fields.Project = input.Project
 	}
 	if input.Tags != nil {
-		entry.Tags = input.Tags
+		fields.Tags = &input.Tags
 	}
 	if input.Favorite != nil {
-		entry.Favorite = *input.Favorite
+		fields.Favorite = input.Favorite
 	}
 	if input.Archived != nil {
-		entry.Archived = *input.Archived
+		fields.Archived = input.Archived
 	}
 
-	entry.UpdatedAt = time.Now()
-
-	if err := s.store.Update(entry); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	entry, err := s.svc.UpdateEntry(id, fields)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "entry not found or update failed")
 		return
 	}
 
@@ -173,17 +135,9 @@ func (s *Server) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	if err := s.store.Delete(id); err != nil {
-		// Try prefix match
-		fullID, resolveErr := s.store.ResolveID(id)
-		if resolveErr != nil {
-			writeError(w, http.StatusNotFound, "entry not found")
-			return
-		}
-		if err := s.store.Delete(fullID); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	if err := s.svc.DeleteEntry(id); err != nil {
+		writeError(w, http.StatusNotFound, "entry not found")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -196,21 +150,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entryType := r.URL.Query().Get("type")
-	opts := store.ListOptions{
-		Type: core.EntryType(entryType),
-	}
+	entryType := core.EntryType(r.URL.Query().Get("type"))
 
-	entries, err := s.store.List(opts)
+	results, err := s.svc.SearchEntries(q, entryType)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	engine := search.NewEngine()
-	results := engine.Search(entries, q)
-
-	// Return just the entries from search results, sorted by score
 	type searchResponse struct {
 		Entry *core.Entry `json:"entry"`
 		Score float64     `json:"score"`
@@ -225,15 +172,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleToday(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
-	entries, err := s.store.GetByDate(now.Year(), int(now.Month()), now.Day())
+	entries, err := s.svc.GetToday()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"date":    now.Format("2006-01-02"),
+		"date":    time.Now().Format("2006-01-02"),
 		"entries": entries,
 	})
 }
@@ -241,25 +187,11 @@ func (s *Server) handleToday(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	entry, err := s.store.Get(id)
+	entry, err := s.svc.CopyEntry(id)
 	if err != nil {
-		fullID, resolveErr := s.store.ResolveID(id)
-		if resolveErr != nil {
-			writeError(w, http.StatusNotFound, "entry not found")
-			return
-		}
-		entry, err = s.store.Get(fullID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "entry not found")
-			return
-		}
+		writeError(w, http.StatusNotFound, "entry not found")
+		return
 	}
-
-	now := time.Now()
-	entry.LastUsedAt = &now
-	entry.UseCount++
-	entry.UpdatedAt = now
-	s.store.Update(entry)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"content":   entry.Content,
@@ -268,32 +200,21 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExportToday(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
-	entries, err := s.store.GetByDate(now.Year(), int(now.Month()), now.Day())
+	md, err := s.svc.ExportTodayMarkdown()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	md, err := export.ExportDailyMarkdown(entries, now)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	dateStr := time.Now().Format("2006-01-02")
 
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=devmemory-%s.md", now.Format("2006-01-02")))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=devmemory-%s.md", dateStr))
 	w.Write([]byte(md))
 }
 
 func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.store.List(store.ListOptions{})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	data, err := export.ExportJSON(entries)
+	data, err := s.svc.ExportJSON()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -305,59 +226,19 @@ func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleImportJSON(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Entries json.RawMessage `json:"entries"`
-	}
-
-	// Try reading as {"entries": [...]} or as direct [...]
-	body := json.NewDecoder(r.Body)
 	var raw json.RawMessage
-	if err := body.Decode(&raw); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	entries, err := export.ImportJSON(raw)
+	imported, err := s.svc.ImportJSON(raw)
 	if err != nil {
-		// Try wrapped format
-		if err2 := json.Unmarshal(raw, &input); err2 == nil {
-			entries, err = export.ImportJSON(input.Entries)
-		}
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid entry format")
-			return
-		}
-	}
-
-	imported := 0
-	for _, entry := range entries {
-		if err := s.store.Create(entry); err != nil {
-			if err := s.store.Update(entry); err != nil {
-				continue
-			}
-		}
-		imported++
+		writeError(w, http.StatusBadRequest, "invalid entry format")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"imported": imported,
-		"total":    len(entries),
 	})
-}
-
-// parseIntOrDefault parses a query parameter as int, returning default on failure.
-func parseIntOrDefault(s string, def int) int {
-	if s == "" {
-		return def
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return def
-	}
-	return n
-}
-
-// containsString checks if a string contains a substring (case-insensitive).
-func containsString(s, substr string) bool {
-	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }

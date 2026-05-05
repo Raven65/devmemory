@@ -4,7 +4,7 @@ A local-first personal memory hub, action library, and work journal for develope
 
 ## What It Does
 
-DevMemory helps you capture, search, and reuse the碎片信息 that accumulates during daily development:
+DevMemory helps you capture, search, and reuse the bits of information that accumulates during daily development:
 
 - Shell commands
 - Useful URLs
@@ -19,17 +19,28 @@ Core loop: **Capture → Classify → Search → Act → Export**
 
 ### Build
 
+Requirements: Go 1.23+, GCC (CGO for Fyne GUI)
+
 ```bash
 go build -o devmemory ./cmd/devmemory
 ```
 
 ### Usage
 
+**Desktop GUI** (default, no arguments):
+
+```bash
+./devmemory          # Launch Fyne desktop GUI
+./devmemory gui      # Same as above
+```
+
+**CLI commands:**
+
 ```bash
 # Add entries
 devmemory add "ss -tinp | grep ESTAB" --type command --tags linux,tcp,debug
 devmemory add "https://docs.kernel.org/networking/" --type url --tags linux,kernel
-devmemory note "NUMA binding affects RDMA performance" --project rdma --tags numa,issue
+devmemory add "NUMA binding affects RDMA performance" --type note --project rdma --tags numa,issue
 
 # List entries
 devmemory list
@@ -43,6 +54,19 @@ devmemory search "numa rdma"
 # Today's entries
 devmemory today
 
+# Show / Edit / Delete
+devmemory show <id>
+devmemory edit <id> --title "New Title"
+devmemory delete <id>
+
+# Export / Import
+devmemory export today -o report.md
+devmemory export json -o backup.json
+devmemory import backup.json
+
+# Web UI (legacy, still available)
+devmemory serve --port 8420
+
 # Version
 devmemory version
 ```
@@ -55,18 +79,35 @@ If `--type` is not specified, DevMemory infers the type:
 - Contains `|`, `&&`, `||`, `;`, `$` → `command`
 - Otherwise → `note`
 
+## Desktop GUI
+
+DevMemory uses [Fyne](https://fyne.io/) for a native desktop interface with 6 pages:
+
+| Page | Description |
+|------|-------------|
+| Capture | Create new entries with type/title/project/tags |
+| Search | Full-text search with type filter and relevance scoring |
+| Today | Today's entries timeline |
+| Actions | Action-type entries (commands, URLs, snippets, prompts, files, folders) |
+| Knowledge | Knowledge-type entries (notes, issues, business, journals, tasks) |
+| Settings | Data info, export/import, status bar |
+
 ## Cross-Platform Build
 
-```bash
-# From Linux, build all platforms:
-./scripts/build.sh
+Fyne requires CGO. For native builds:
 
-# Or manually:
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/devmemory-linux-amd64 ./cmd/devmemory
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/devmemory-windows-amd64.exe ./cmd/devmemory
-CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o dist/devmemory-darwin-amd64 ./cmd/devmemory
-CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/devmemory-darwin-arm64 ./cmd/devmemory
+```bash
+./scripts/build.sh
 ```
+
+For cross-platform builds, use [fyne-cross](https://github.com/fyne-io/fyne-cross):
+
+```bash
+go install github.com/fyne-io/fyne-cross@latest
+fyne-cross --targets=linux/amd64,windows/amd64,darwin/amd64,darwin/arm64 .
+```
+
+Or build on each target platform directly.
 
 ## Data Storage
 
@@ -106,11 +147,12 @@ devmemory-data/
 
 ## Tech Stack
 
-- **Language**: Go
+- **Language**: Go 1.23+
+- **GUI**: [Fyne](https://fyne.io/) v2 (native desktop)
 - **Storage**: bbolt (embedded key-value)
-- **Server**: net/http (stdlib)
-- **Frontend**: HTML/CSS/JS (Go embed)
+- **Server**: net/http (stdlib, legacy Web UI)
 - **CLI**: stdlib flag + manual subcommand dispatch
+- **CGO**: Required (Fyne dependency)
 
 ## Design Principles
 
@@ -118,4 +160,4 @@ devmemory-data/
 - Single binary, zero install
 - Capture first, organize later
 - Personal use, no multi-user concerns
-- Minimal dependencies, no CGO
+- CLI and GUI share the same service layer
